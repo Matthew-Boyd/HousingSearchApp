@@ -1,0 +1,1289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wisconsin Parcel Search</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-serif;font-size:13px;color:#222}
+
+#app{display:flex;height:100vh;overflow:hidden}
+
+/* ── Left panel ──────────────────────────────────────────────────────────── */
+#left-panel{
+  width:380px;min-width:380px;max-width:380px;
+  display:flex;flex-direction:column;height:100%;
+  background:#fff;border-right:1px solid #ccc;
+  transition:width .15s,min-width .15s;overflow:hidden;
+}
+#left-panel.collapsed{width:0;min-width:0}
+
+#filter-section{
+  height:48%;flex-shrink:0;overflow-y:auto;
+  padding:10px 12px;border-bottom:2px solid #ccc;
+}
+#results-section{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+#results-header{padding:7px 10px;background:#f0f0f0;border-bottom:1px solid #ccc;flex-shrink:0}
+#results-list{flex:1;overflow-y:auto}
+
+/* ── Map side ────────────────────────────────────────────────────────────── */
+#map-container{flex:1;position:relative;min-width:0}
+#map{width:100%;height:100%}
+
+#panel-toggle{
+  position:absolute;left:0;top:50%;transform:translateY(-50%);
+  z-index:1000;width:18px;height:46px;
+  background:#fff;border:1px solid #aaa;border-left:none;
+  border-radius:0 4px 4px 0;cursor:pointer;
+  font-size:10px;color:#555;display:flex;align-items:center;justify-content:center;
+  padding:0;line-height:1;
+}
+#panel-toggle:hover{background:#f0f0f0}
+
+/* ── Filter panel ────────────────────────────────────────────────────────── */
+.panel-title{font-size:14px;font-weight:700;margin-bottom:8px;color:#185FA5}
+.filter-group{margin-bottom:10px}
+.filter-group label:not(.checkbox-label){display:block;font-weight:600;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.03em;margin-bottom:3px}
+.filter-group input[type=number],.filter-group select{
+  border:1px solid #ccc;border-radius:3px;padding:3px 5px;
+  font-size:13px;background:#fafafa;
+}
+.filter-group input[type=number]:focus,.filter-group select:focus{outline:none;border-color:#185FA5}
+.input-row{display:flex;align-items:center;gap:4px}
+.input-row span{color:#666;font-size:12px}
+.input-row input[type=number]{flex:1}
+.derived{font-size:11px;color:#185FA5;font-weight:600;margin-top:2px}
+.checkbox-label{display:flex;align-items:flex-start;gap:5px;cursor:pointer;font-size:13px;margin-bottom:3px;line-height:1.3}
+.checkbox-label input{margin-top:1px;flex-shrink:0}
+.warn-text{color:#b45309;font-size:11px;display:block;margin-left:20px}
+.agri-label{flex-direction:column;gap:1px}
+.county-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;margin-top:4px}
+.fg-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
+.fg-header label{margin-bottom:0}
+.link-btn{background:none;border:none;color:#185FA5;cursor:pointer;font-size:11px;padding:0;text-decoration:underline}
+.link-btn:hover{color:#0d3a6e}
+.search-btn{
+  width:100%;padding:7px;background:#185FA5;color:#fff;
+  border:none;border-radius:4px;font-size:14px;font-weight:600;
+  cursor:pointer;margin-top:4px;
+}
+.search-btn:hover{background:#0d3a6e}
+.search-btn:disabled{background:#999;cursor:not-allowed}
+.tooltip-icon{
+  display:inline-block;width:14px;height:14px;background:#aaa;color:#fff;
+  border-radius:50%;text-align:center;line-height:14px;font-size:10px;
+  cursor:help;margin-left:3px;font-weight:700;
+}
+
+/* ── Results header ──────────────────────────────────────────────────────── */
+.rh-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.rh-count{font-weight:700;font-size:13px;flex:1}
+.rh-btn{
+  padding:2px 7px;font-size:11px;background:#185FA5;color:#fff;
+  border:none;border-radius:3px;cursor:pointer;
+}
+.rh-btn:hover{background:#0d3a6e}
+.rh-btn.secondary{background:#555}
+.rh-btn.secondary:hover{background:#333}
+.assessor-status{font-size:10px;color:#666;margin-top:3px;line-height:1.4}
+.assessor-status span{margin-right:6px}
+.ast-loading{color:#b45309}
+.ast-done{color:#166534}
+.ast-error{color:#991b1b}
+.ast-stub{color:#999}
+
+/* ── List items ──────────────────────────────────────────────────────────── */
+.list-item{
+  padding:7px 10px;border-bottom:1px solid #eee;cursor:pointer;
+  transition:background .1s;
+}
+.list-item:hover{background:#f0f6ff}
+.list-item.highlighted{background:#dbeafe}
+.list-item.is-hidden{opacity:.45}
+.list-addr{font-size:12px;font-weight:500;color:#222;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.list-meta{display:flex;align-items:center;gap:5px;margin-top:2px;flex-wrap:wrap}
+.list-fmv{font-size:12px;font-weight:700;color:#185FA5}
+.list-dist{font-size:11px;color:#555}
+.badge{font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px;text-transform:uppercase}
+.badge-absentee{background:#fb923c;color:#fff}
+.badge-hidden{background:#9ca3af;color:#fff}
+
+/* ── Popup ───────────────────────────────────────────────────────────────── */
+.leaflet-popup-content{min-width:280px;max-width:320px;font-size:12px;line-height:1.45}
+.popup-badges{display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap}
+.popup-section{margin-bottom:7px;padding-bottom:7px;border-bottom:1px solid #eee}
+.popup-section:last-of-type{border-bottom:none;margin-bottom:4px}
+.popup-row{display:flex;justify-content:space-between;gap:8px;margin-bottom:2px}
+.popup-label{color:#666;flex-shrink:0}
+.popup-val{font-weight:500;text-align:right;word-break:break-word}
+.popup-val.highlight{color:#185FA5;font-weight:700;font-size:13px}
+.popup-pair{display:flex;gap:12px;font-size:11px;color:#555}
+.popup-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;padding-top:6px;border-top:1px solid #eee}
+.popup-zillow{font-size:11px;color:#185FA5;text-decoration:none}
+.popup-zillow:hover{text-decoration:underline}
+.popup-hide-btn{
+  font-size:11px;padding:2px 8px;background:#e5e7eb;border:1px solid #ccc;
+  border-radius:3px;cursor:pointer;
+}
+.popup-hide-btn:hover{background:#d1d5db}
+.popup-hide-btn.unhide{background:#fef3c7;border-color:#f59e0b}
+
+/* ── Cluster icons ───────────────────────────────────────────────────────── */
+.cluster-circle{
+  border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-weight:700;color:#fff;border:2px solid rgba(255,255,255,.6);
+}
+.cluster-sm{width:30px;height:30px;background:#185FA5;font-size:11px}
+.cluster-md{width:38px;height:38px;background:#0e3d6b;font-size:12px}
+.cluster-lg{width:46px;height:46px;background:#082a4a;font-size:13px}
+
+/* ── Progress bar ────────────────────────────────────────────────────────── */
+#progress-bar{
+  position:absolute;bottom:0;left:0;right:0;height:4px;
+  background:#185FA5;transition:width .2s;z-index:999;
+  display:none;
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Left panel ──────────────────────────────────────────────────────── -->
+  <div id="left-panel">
+
+    <!-- Filter section -->
+    <div id="filter-section">
+      <div class="panel-title">Wisconsin Parcel Search</div>
+
+      <!-- Value filters -->
+      <div class="filter-group">
+        <label>Purchase budget</label>
+        <div class="input-row"><span>$</span><input type="number" id="budget" value="900000" min="0" step="10000"></div>
+        <label style="margin-top:5px">
+          Assessment ratio
+          <span class="tooltip-icon" title="Pre-filled from Wisconsin DOR data. Each parcel's displayed estimated market value uses its municipality-specific ratio. The filter ceiling = budget × ratio ÷ 100.">?</span>
+        </label>
+        <div class="input-row">
+          <input type="number" id="ratio" value="95" min="1" max="200" step="0.1">
+          <span>%</span>
+        </div>
+        <div class="derived" id="ceiling-display">Filter ceiling: $855,000</div>
+        <label style="margin-top:5px">Min FMV (optional)</label>
+        <div class="input-row"><span>$</span><input type="number" id="minFmv" placeholder="none" min="0"></div>
+      </div>
+
+      <!-- Acreage -->
+      <div class="filter-group">
+        <label>GIS Acres</label>
+        <div class="input-row">
+          <input type="number" id="minAcres" value="4" min="0" step="0.5" style="width:70px">
+          <span>to</span>
+          <input type="number" id="maxAcres" placeholder="no max" min="0" step="1" style="width:70px">
+        </div>
+      </div>
+
+      <!-- Structure -->
+      <div class="filter-group">
+        <label class="checkbox-label">
+          <input type="checkbox" id="structureOnly" checked>
+          Structures only (impvalue &gt; 0)
+        </label>
+      </div>
+
+      <!-- Property class -->
+      <div class="filter-group">
+        <label>Property Class</label>
+        <label class="checkbox-label"><input type="checkbox" id="class1" checked> Class 1 – Residential</label>
+        <label class="checkbox-label agri-label">
+          <span style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="class4"> Class 4 – Agricultural</span>
+          <span class="warn-text">⚠ May require agricultural financing — verify with lender</span>
+        </label>
+      </div>
+
+      <!-- Counties -->
+      <div class="filter-group">
+        <div class="fg-header">
+          <label>Counties</label>
+          <button class="link-btn" id="countyToggleBtn">Uncheck all</button>
+        </div>
+        <div class="county-grid" id="county-grid"></div>
+      </div>
+
+      <!-- Owner type -->
+      <div class="filter-group">
+        <label class="checkbox-label">
+          <input type="checkbox" id="absenteeOnly">
+          Absentee owners only (client filter)
+        </label>
+      </div>
+
+      <!-- Water proximity -->
+      <div class="filter-group">
+        <label class="checkbox-label">
+          <input type="checkbox" id="waterOnly">
+          Water-adjacent only (physical contact)
+        </label>
+      </div>
+
+      <!-- Min distance -->
+      <div class="filter-group">
+        <label>Min distance to nearest house</label>
+        <div class="input-row">
+          <input type="number" id="minDist" placeholder="none" min="0" style="width:80px">
+          <select id="distUnit"><option value="ft">ft</option><option value="mi">mi</option></select>
+          <span id="distFilterNote" style="font-size:10px;color:#999"></span>
+        </div>
+      </div>
+
+      <!-- Bedrooms -->
+      <div class="filter-group">
+        <label>Min bedrooms</label>
+        <input type="number" id="minBedrooms" value="3" min="1" style="width:60px">
+        <div style="font-size:10px;color:#999;margin-top:2px" id="bedroomsNote">Applied after county assessor data loads</div>
+      </div>
+
+      <!-- Hidden controls -->
+      <div class="filter-group">
+        <label class="checkbox-label" style="margin-bottom:4px">
+          <input type="checkbox" id="showHidden">
+          Show hidden properties
+        </label>
+        <button class="link-btn" id="clearHiddenBtn">Clear all hidden (<span id="hiddenCount">0</span>)</button>
+      </div>
+
+      <button class="search-btn" id="searchBtn">Search</button>
+    </div>
+
+    <!-- Results section -->
+    <div id="results-section">
+      <div id="results-header">
+        <div class="rh-row">
+          <span class="rh-count" id="results-count">No results</span>
+          <button class="rh-btn secondary" id="sortBtn">EMV ▲</button>
+          <button class="rh-btn" id="exportBtn">Export CSV</button>
+        </div>
+        <div class="assessor-status" id="assessor-status"></div>
+      </div>
+      <div id="results-list"></div>
+    </div>
+
+  </div><!-- /left-panel -->
+
+  <!-- ── Map side ──────────────────────────────────────────────────────────── -->
+  <div id="map-container">
+    <button id="panel-toggle">◀</button>
+    <div id="map"></div>
+    <div id="progress-bar"></div>
+  </div>
+
+</div><!-- /app -->
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+<script>
+'use strict';
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const TARGET_COUNTIES = ['DANE','JEFFERSON','WAUKESHA','GREEN','ROCK','WALWORTH','COLUMBIA','DODGE','WASHINGTON'];
+const CLASS_COLORS = {'1':'#185FA5','2':'#3B6D11','4':'#BA7517','5':'#993C1D'};
+const DEFAULT_COLOR = '#5F5E5A';
+const HIDDEN_COLOR  = '#9ca3af';
+// V11 field names (all uppercase). GISACRES is null for some counties; WHERE clause uses COALESCE.
+const OUT_FIELDS = [
+  'PARCELID','OWNERNME1','OWNERNME2','PSTLADRESS','SITEADRESS',
+  'ESTFMKVALUE','LNDVALUE','IMPVALUE','CNTASSDVALUE',
+  'GISACRES','ASSDACRES','DEEDACRES','PROPCLASS','CONAME','PLACENAME','NETPRPTA',
+  'ADDNUMPREFIX','ADDNUM','ADDNUMSUFFIX','PREFIX','STREETNAME','STREETTYPE','SUFFIX',
+  'LATITUDE','LONGITUDE'
+].join(',');
+
+// ── App state ──────────────────────────────────────────────────────────────────
+const S = {
+  parcels:        [],          // GeoJSON features in order fetched (estfmkvalue ASC)
+  featureMap:     new Map(),   // parcelfid → feature
+  enrichment:     new Map(),   // parcelfid → { floodZone, wetlands, bedrooms, sqft, yearBuilt, nearestDistanceFt, nearestDistanceMi }
+  hidden:         new Set(),   // parcelfid
+  allMarkers:     new Map(),   // parcelfid → L.circleMarker
+  inCluster:      new Set(),   // parcelfids currently in clusterGroup
+  hiddenMarkers:  new Map(),   // parcelfid → faded L.circleMarker (for hiddenGroup)
+  listItems:      new Map(),   // parcelfid → DOM element
+  dorRatios:      {},          // "MUNI|COUNTY" → ratio number
+  defaultRatio:   95,
+  assessorStatus: {},          // county → 'loading'|'done'|'error'|'stub'
+  neighborDone:   false,
+  floodDone:      false,
+  waterFeatures:  null,
+  isSearching:    false,
+  totalCount:     null,
+  loadedCount:    0,
+  currentSort:    'asc',
+  openPopupFid:   null,
+};
+
+// ── Map setup ──────────────────────────────────────────────────────────────────
+const map = L.map('map', {
+  center: [43.1, -89.4],
+  zoom: 8,
+  preferCanvas: true,
+});
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+  subdomains: 'abcd', maxZoom: 19,
+}).addTo(map);
+
+const renderer = L.canvas({ padding: 0.5 });
+
+const clusterGroup = L.markerClusterGroup({
+  chunkedLoading: true,
+  maxClusterRadius: 60,
+  showCoverageOnHover: false,
+  iconCreateFunction(cluster) {
+    const n = cluster.getChildCount();
+    const sz = n > 100 ? 'lg' : n > 20 ? 'md' : 'sm';
+    const px = sz === 'lg' ? 46 : sz === 'md' ? 38 : 30;
+    return L.divIcon({
+      html: `<div class="cluster-circle cluster-${sz}">${n}</div>`,
+      className: '', iconSize: L.point(px, px)
+    });
+  }
+});
+const hiddenGroup = L.layerGroup();
+map.addLayer(clusterGroup);
+
+// ── Initialization ─────────────────────────────────────────────────────────────
+async function initApp() {
+  buildCountyGrid();
+  setupEventListeners();
+  updateCeilingDisplay();
+
+  // Load DOR ratios and hidden list in parallel
+  const [initData] = await Promise.allSettled([
+    fetch('/init-data').then(r => r.json()),
+    fetch('/hidden').then(r => r.json()).then(arr => {
+      S.hidden = new Set(arr);
+      document.getElementById('hiddenCount').textContent = S.hidden.size;
+    })
+  ]);
+  if (initData.status === 'fulfilled') {
+    S.dorRatios    = initData.value.ratios    || {};
+    S.defaultRatio = initData.value.defaultRatio ?? 95;
+    updateRatioFromCounties();
+  }
+}
+
+function buildCountyGrid() {
+  const grid = document.getElementById('county-grid');
+  for (const c of TARGET_COUNTIES) {
+    const lbl = document.createElement('label');
+    lbl.className = 'checkbox-label';
+    lbl.innerHTML = `<input type="checkbox" class="county-cb" value="${c}" checked> ${titleCase(c)}`;
+    grid.appendChild(lbl);
+    lbl.querySelector('input').addEventListener('change', updateRatioFromCounties);
+  }
+}
+
+function setupEventListeners() {
+  document.getElementById('budget').addEventListener('input', updateCeilingDisplay);
+  document.getElementById('ratio').addEventListener('input', updateCeilingDisplay);
+  document.getElementById('searchBtn').addEventListener('click', startSearch);
+  document.getElementById('sortBtn').addEventListener('click', toggleSort);
+  document.getElementById('exportBtn').addEventListener('click', exportCSV);
+  document.getElementById('clearHiddenBtn').addEventListener('click', clearAllHidden);
+  document.getElementById('showHidden').addEventListener('change', onShowHiddenToggle);
+  document.getElementById('waterOnly').addEventListener('change', onWaterFilterChange);
+  document.getElementById('absenteeOnly').addEventListener('change', applyClientFilters);
+  document.getElementById('minDist').addEventListener('input', applyClientFilters);
+  document.getElementById('distUnit').addEventListener('change', applyClientFilters);
+  document.getElementById('minBedrooms').addEventListener('input', applyClientFilters);
+
+  document.getElementById('countyToggleBtn').addEventListener('click', () => {
+    const cbs = [...document.querySelectorAll('.county-cb')];
+    const allChecked = cbs.every(cb => cb.checked);
+    cbs.forEach(cb => { cb.checked = !allChecked; });
+    document.getElementById('countyToggleBtn').textContent = allChecked ? 'Check all' : 'Uncheck all';
+    updateRatioFromCounties();
+  });
+
+  document.getElementById('panel-toggle').addEventListener('click', () => {
+    const panel = document.getElementById('left-panel');
+    const btn   = document.getElementById('panel-toggle');
+    panel.classList.toggle('collapsed');
+    btn.textContent = panel.classList.contains('collapsed') ? '▶' : '◀';
+    setTimeout(() => map.invalidateSize(), 160);
+  });
+}
+
+// ── Assessment ratio helpers ───────────────────────────────────────────────────
+function normStr(s) {
+  return (s || '').toUpperCase().replace(/[\r\n]+/g, ' ').replace(/[^A-Z0-9 ]/g, '').trim();
+}
+function dorKey(muni, county) {
+  const c = normStr(county).replace(/\s*COUNTY\s*$/, '').trim();
+  return `${normStr(muni)}|${c}`;
+}
+function getRatioForParcel(props) {
+  // PLACENAME includes municipality type prefix ("TOWN OF PERRY", "CITY OF MADISON").
+  // Strip it before looking up in the DOR table where names have no prefix.
+  const muni = (props.PLACENAME || '').replace(/^(TOWN OF |CITY OF |VILLAGE OF |TOWNSHIP OF )/i, '').trim();
+  return S.dorRatios[dorKey(muni, props.CONAME)] ?? S.defaultRatio;
+}
+function getSelectedCounties() {
+  // Returns county names matching CONAME in V11 (uppercase, e.g., "DANE")
+  return [...document.querySelectorAll('.county-cb:checked')].map(cb => cb.value);
+}
+function updateRatioFromCounties() {
+  const counties = getSelectedCounties();
+  if (counties.length === 0) return;
+  const vals = [];
+  for (const [key, val] of Object.entries(S.dorRatios)) {
+    const kc = key.split('|')[1];
+    if (counties.includes(kc)) vals.push(val);
+  }
+  const avg = vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : S.defaultRatio;
+  document.getElementById('ratio').value = avg.toFixed(1);
+  updateCeilingDisplay();
+}
+function updateCeilingDisplay() {
+  const budget  = parseFloat(document.getElementById('budget').value) || 900000;
+  const ratio   = parseFloat(document.getElementById('ratio').value)  || 95;
+  const ceiling = Math.round(budget * ratio / 100);
+  document.getElementById('ceiling-display').textContent = `Filter ceiling: ${fmtMoney(ceiling)}`;
+}
+
+// ── Search ─────────────────────────────────────────────────────────────────────
+async function startSearch() {
+  if (S.isSearching) return;
+  S.isSearching = true;
+  clearResults();
+  document.getElementById('searchBtn').disabled = true;
+  document.getElementById('searchBtn').textContent = 'Searching…';
+  document.getElementById('results-count').textContent = 'Fetching…';
+  showProgressBar(0);
+
+  try {
+    const where = buildWhereClause();
+    if (!where) {
+      document.getElementById('results-count').textContent = 'Select at least one county and property class.';
+      return;
+    }
+
+    // Kick off count query in parallel with first data page
+    fetch(`/parcel-query?${new URLSearchParams({ where, returnCountOnly: 'true', f: 'json' })}`)
+      .then(r => r.json()).then(d => { S.totalCount = d.count; updateResultsCount(); })
+      .catch(() => {});
+
+    await fetchAllPages(where);
+
+    if (S.parcels.length === 0) {
+      document.getElementById('results-count').textContent = 'No results matched your filters.';
+      return;
+    }
+
+    map.fitBounds(clusterGroup.getBounds().pad(0.05));
+    hideProgressBar();
+    updateResultsCount();
+
+    // Three enrichment passes in parallel
+    const bbox = computeBbox();
+    runEnrichmentPasses(bbox);
+
+  } catch (err) {
+    document.getElementById('results-count').textContent = `Error: ${err.message}`;
+  } finally {
+    S.isSearching = false;
+    document.getElementById('searchBtn').disabled = false;
+    document.getElementById('searchBtn').textContent = 'Search';
+  }
+}
+
+function buildWhereClause() {
+  const budget   = parseFloat(document.getElementById('budget').value)   || 900000;
+  const ratio    = parseFloat(document.getElementById('ratio').value)    || 95;
+  const ceiling  = Math.round(budget * ratio / 100);
+  const minFmv   = parseFloat(document.getElementById('minFmv').value);
+  const minAcres = parseFloat(document.getElementById('minAcres').value) || 0;
+  const maxAcres = parseFloat(document.getElementById('maxAcres').value);
+  // GISACRES is null for some Wisconsin counties (e.g., Dane, Green). COALESCE falls through
+  // to ASSDACRES then DEEDACRES so the filter works regardless of which field is populated.
+  const acresExpr = 'COALESCE(GISACRES, ASSDACRES, DEEDACRES)';
+
+  const conds = [`ESTFMKVALUE <= ${ceiling}`];
+  if (!isNaN(minFmv) && minFmv > 0) conds.push(`ESTFMKVALUE >= ${minFmv}`);
+  if (minAcres > 0)                  conds.push(`${acresExpr} >= ${minAcres}`);
+  if (!isNaN(maxAcres))              conds.push(`${acresExpr} <= ${maxAcres}`);
+  if (document.getElementById('structureOnly').checked) conds.push('IMPVALUE > 0');
+
+  const classes = [];
+  if (document.getElementById('class1').checked) classes.push("'1'");
+  if (document.getElementById('class4').checked) classes.push("'4'");
+  if (classes.length === 0) return null;
+  conds.push(`PROPCLASS IN (${classes.join(',')})`);
+
+  const counties = getSelectedCounties();
+  if (counties.length === 0) return null;
+  conds.push(`CONAME IN (${counties.map(c => `'${c}'`).join(',')})`);
+
+  return conds.join(' AND ');
+}
+
+async function fetchAllPages(where) {
+  let offset = 0;
+  const params = () => new URLSearchParams({
+    where, outFields: OUT_FIELDS,
+    returnGeometry: 'true', outSR: '4326', f: 'geojson',
+    resultRecordCount: '2000',
+    resultOffset: String(offset),
+    orderByFields: 'estfmkvalue ASC'
+  });
+
+  while (true) {
+    const res = await fetch(`/parcel-query?${params()}`);
+    const data = await res.json();
+    if (!data.features || data.features.length === 0) break;
+    addParcels(data.features);
+    if (data.features.length < 2000) break;
+    offset += 2000;
+    showProgressBar(S.loadedCount / (S.totalCount || (S.loadedCount + 2000)));
+    document.getElementById('results-count').textContent = `Fetching… ${S.loadedCount.toLocaleString()} / ~${(S.totalCount || '?').toLocaleString()}`;
+  }
+}
+
+// ── Parcel rendering ───────────────────────────────────────────────────────────
+function addParcels(features) {
+  const toAdd = [];
+  for (const f of features) {
+    const fid   = f.properties.PARCELID;
+    if (!fid || S.featureMap.has(fid)) continue;
+
+    // V11 includes LATITUDE/LONGITUDE fields directly — use them when available.
+    // Fall back to geometry centroid computation if absent.
+    if (f.properties.LATITUDE && f.properties.LONGITUDE) {
+      f._centroid = { lat: f.properties.LATITUDE, lng: f.properties.LONGITUDE };
+    } else {
+      f._centroid = computeCentroid(f.geometry);
+    }
+    if (!f._centroid) continue;
+
+    S.parcels.push(f);
+    S.featureMap.set(fid, f);
+
+    // Build marker
+    const isHidden = S.hidden.has(fid);
+    const marker = buildMarker(f, isHidden);
+    S.allMarkers.set(fid, marker);
+
+    if (!isHidden) {
+      toAdd.push(marker);
+      S.inCluster.add(fid);
+    } else if (document.getElementById('showHidden').checked) {
+      S.hiddenMarkers.set(fid, buildHiddenMarker(f));
+      hiddenGroup.addLayer(S.hiddenMarkers.get(fid));
+    }
+
+    // Build list item
+    const li = buildListItem(f);
+    S.listItems.set(fid, li);
+    document.getElementById('results-list').appendChild(li);
+    if (isHidden && !document.getElementById('showHidden').checked) {
+      li.style.display = 'none';
+    }
+  }
+  clusterGroup.addLayers(toAdd);
+  S.loadedCount += features.length;
+}
+
+function buildMarker(feature, isHidden) {
+  if (isHidden) return buildHiddenMarker(feature);
+  const p  = feature.properties;
+  const ab = isAbsentee(p);
+  const color = CLASS_COLORS[p.PROPCLASS] || DEFAULT_COLOR;
+  const marker = L.circleMarker([feature._centroid.lat, feature._centroid.lng], {
+    renderer,
+    radius:       ab ? 7 : 5,
+    fillColor:    color,
+    color:        ab ? '#ffffff' : color,
+    weight:       ab ? 2 : 1,
+    opacity:      1,
+    fillOpacity:  0.85,
+  });
+  marker._fid = p.PARCELID;
+  marker.on('click', () => onMarkerClick(p.PARCELID));
+  return marker;
+}
+
+function buildHiddenMarker(feature) {
+  const m = L.circleMarker([feature._centroid.lat, feature._centroid.lng], {
+    renderer, radius: 5,
+    fillColor: HIDDEN_COLOR, color: HIDDEN_COLOR,
+    weight: 1, opacity: 0.3, fillOpacity: 0.3,
+  });
+  m._fid = feature.properties.PARCELID;
+  m.on('click', () => onMarkerClick(feature.properties.PARCELID));
+  return m;
+}
+
+function buildListItem(feature) {
+  const p   = feature.properties;
+  const fid = p.parcelfid;
+  const li  = document.createElement('div');
+  li.className = 'list-item' + (S.hidden.has(fid) ? ' is-hidden' : '');
+  li.dataset.fid = fid;
+  li.innerHTML = listItemHTML(feature);
+  li.addEventListener('click', () => focusParcel(fid));
+  return li;
+}
+
+function listItemHTML(feature) {
+  const p   = feature.properties;
+  const fid = p.PARCELID;
+  const e   = S.enrichment.get(fid) || {};
+  const emv = p.ESTFMKVALUE ? Math.round(p.ESTFMKVALUE / (getRatioForParcel(p) / 100)) : null;
+  const ab  = isAbsentee(p);
+  const distHtml = e.nearestDistanceFt != null
+    ? `<span class="list-dist">${fmtDist(e.nearestDistanceFt, e.nearestDistanceMi)}</span>`
+    : (S.neighborDone ? '' : `<span class="list-dist" id="li-dist-${CSS.escape(fid)}">—</span>`);
+  return `
+    <div class="list-addr">${esc(getAddress(p))}</div>
+    <div class="list-meta">
+      <span class="list-fmv">~${fmtMoney(emv)}</span>
+      ${distHtml}
+      ${ab ? '<span class="badge badge-absentee">ABSENTEE</span>' : ''}
+      ${S.hidden.has(fid) ? '<span class="badge badge-hidden">HIDDEN</span>' : ''}
+    </div>`;
+}
+
+// ── Popup ──────────────────────────────────────────────────────────────────────
+function onMarkerClick(fid) {
+  const feature = S.featureMap.get(fid);
+  if (!feature) return;
+  S.openPopupFid = fid;
+
+  const marker = S.allMarkers.get(fid);
+  if (!marker) return;
+
+  // Scroll list to item
+  const li = S.listItems.get(fid);
+  if (li) { li.scrollIntoView({ block: 'nearest' }); highlightListItem(fid); }
+
+  // Build popup and open it
+  const popup = L.popup({ maxWidth: 340 }).setContent(buildPopupHTML(feature));
+  popup.on('remove', () => { S.openPopupFid = null; });
+  marker.bindPopup(popup).openPopup();
+}
+
+function buildPopupHTML(feature) {
+  const p   = feature.properties;
+  const fid = p.PARCELID;
+  const e   = S.enrichment.get(fid) || {};
+  const ab  = isAbsentee(p);
+  const ratio = getRatioForParcel(p);
+  const emv   = p.ESTFMKVALUE ? Math.round(p.ESTFMKVALUE / (ratio / 100)) : null;
+  const isHid = S.hidden.has(fid);
+  const zillowQ = encodeURIComponent((p.SITEADRESS || getAddress(p)) + ' WI');
+  const acres = p.GISACRES ?? p.ASSDACRES ?? p.DEEDACRES;
+
+  const floodVal = e.floodZone != null
+    ? (e.floodZone === 'NONE' ? 'None' : `<span style="color:${e.floodZone.startsWith('A') || e.floodZone.startsWith('V') ? '#b91c1c' : '#166534'}">${e.floodZone}</span>`)
+    : (S.floodDone ? 'None' : '<span id="pu-flood-' + fid + '">loading…</span>');
+  const wetlandsVal = e.wetlands != null
+    ? (e.wetlands ? '<span style="color:#b45309">Yes</span>' : 'No')
+    : (S.floodDone ? 'No' : '<span id="pu-wet-' + fid + '">loading…</span>');
+  const distVal = e.nearestDistanceFt != null
+    ? fmtDist(e.nearestDistanceFt, e.nearestDistanceMi)
+    : (S.neighborDone ? '—' : '<span id="pu-dist-' + fid + '">loading…</span>');
+  const bedroomsVal = e.bedrooms != null ? e.bedrooms
+    : (S.assessorStatus[(p.CONAME||'')] === 'done' ? '—' : '<span id="pu-br-' + fid + '">loading…</span>');
+
+  return `<div>
+    <div class="popup-badges">
+      ${ab  ? '<span class="badge badge-absentee">ABSENTEE</span>' : ''}
+      ${isHid ? '<span class="badge badge-hidden">HIDDEN</span>' : ''}
+    </div>
+    <div class="popup-section">
+      <div class="popup-row"><span class="popup-label">Owner</span><span class="popup-val">${esc(p.OWNERNME1 || '—')}${p.OWNERNME2 ? ' / ' + esc(p.OWNERNME2) : ''}</span></div>
+      <div class="popup-row"><span class="popup-label">Mail to</span><span class="popup-val">${esc(p.PSTLADRESS || '—')}</span></div>
+    </div>
+    <div class="popup-section">
+      <div class="popup-row"><span class="popup-label">Property</span><span class="popup-val">${esc(getAddress(p))}</span></div>
+      <div class="popup-row"><span class="popup-label">Location</span><span class="popup-val">${esc((p.CONAME||'') + ' Co · ' + (p.PLACENAME||''))}</span></div>
+    </div>
+    <div class="popup-section">
+      <div class="popup-row"><span class="popup-label">Est. Market Value</span><span class="popup-val highlight">~${fmtMoney(emv)}</span></div>
+      <div class="popup-row"><span class="popup-label">Est. FMV (API)</span><span class="popup-val">${fmtMoney(p.ESTFMKVALUE)}</span></div>
+      <div class="popup-pair"><span>Land: ${fmtMoney(p.LNDVALUE)}</span><span>Improvements: ${fmtMoney(p.IMPVALUE)}</span></div>
+    </div>
+    <div class="popup-section">
+      <div class="popup-row"><span class="popup-label">Acres</span><span class="popup-val">${fmtAcres(acres)}</span></div>
+      <div class="popup-row"><span class="popup-label">Nearest house</span><span class="popup-val">${distVal}</span></div>
+      <div class="popup-row"><span class="popup-label">Bedrooms</span><span class="popup-val">${bedroomsVal}</span></div>
+      ${e.sqft ? `<div class="popup-row"><span class="popup-label">Sq ft</span><span class="popup-val">${e.sqft.toLocaleString()}</span></div>` : ''}
+      ${e.yearBuilt ? `<div class="popup-row"><span class="popup-label">Year built</span><span class="popup-val">${e.yearBuilt}</span></div>` : ''}
+      <div class="popup-row"><span class="popup-label">Net tax</span><span class="popup-val">${fmtMoney(p.NETPRPTA)}/yr</span></div>
+      <div class="popup-row"><span class="popup-label">Class</span><span class="popup-val">${p.PROPCLASS || '—'}</span></div>
+      <div class="popup-row"><span class="popup-label">Parcel ID</span><span class="popup-val" style="font-size:10px">${esc(p.PARCELID||'—')}</span></div>
+    </div>
+    <div class="popup-section">
+      <div class="popup-row"><span class="popup-label">Flood zone</span><span class="popup-val">${floodVal}</span></div>
+      <div class="popup-row"><span class="popup-label">Wetlands</span><span class="popup-val">${wetlandsVal}</span></div>
+    </div>
+    <div class="popup-actions">
+      <a class="popup-zillow" href="https://www.zillow.com/homes/${zillowQ}_rb/" target="_blank" rel="noopener">Check Zillow ↗</a>
+      <button class="popup-hide-btn ${isHid ? 'unhide' : ''}" onclick="toggleHidden('${fid.replace(/'/g, "\\'")}')">${isHid ? 'Unhide' : 'Hide this property'}</button>
+    </div>
+  </div>`;
+}
+
+// Patch specific fields in an open popup without rebuilding the whole thing
+function patchOpenPopup(fid) {
+  if (S.openPopupFid !== fid) return;
+  const e = S.enrichment.get(fid) || {};
+  const p = (S.featureMap.get(fid) || {}).properties || {};
+  const county = p.CONAME || '';
+
+  const set = (id, html) => { const el = document.getElementById(id); if (el) el.outerHTML = html; };
+  if (e.floodZone != null) {
+    set(`pu-flood-${fid}`, e.floodZone === 'NONE' ? 'None' : `<span style="color:${e.floodZone.startsWith('A')||e.floodZone.startsWith('V')?'#b91c1c':'#166534'}">${e.floodZone}</span>`);
+    set(`pu-wet-${fid}`,   e.wetlands ? '<span style="color:#b45309">Yes</span>' : 'No');
+  }
+  if (e.nearestDistanceFt != null) {
+    set(`pu-dist-${fid}`, fmtDist(e.nearestDistanceFt, e.nearestDistanceMi));
+  }
+  if (e.bedrooms != null || S.assessorStatus[county] === 'done') {
+    set(`pu-br-${fid}`, e.bedrooms != null ? String(e.bedrooms) : '—');
+  }
+}
+
+// ── Enrichment passes ──────────────────────────────────────────────────────────
+async function runEnrichmentPasses(bbox) {
+  document.getElementById('assessor-status').textContent = 'Enriching: flood/wetlands, neighbor distance, assessor…';
+  await Promise.allSettled([
+    runFloodWetlandsPass(bbox),
+    runNeighborPass(bbox),
+    runAssessorPass(),
+  ]);
+  document.getElementById('assessor-status').textContent = 'Enrichment complete.';
+}
+
+async function runFloodWetlandsPass(bbox) {
+  try {
+    const [minLng, minLat, maxLng, maxLat] = bbox;
+    const geomParam = JSON.stringify({ xmin: minLng, ymin: minLat, xmax: maxLng, ymax: maxLat, spatialReference: { wkid: 4326 } });
+    const baseParams = new URLSearchParams({
+      geometry: geomParam, geometryType: 'esriGeometryEnvelope',
+      spatialRel: 'esriSpatialRelIntersects', inSR: '4326',
+      returnGeometry: 'false', f: 'json'
+    });
+
+    const [floodRes, nwiRes] = await Promise.allSettled([
+      fetch(`/flood-query?${new URLSearchParams({ ...Object.fromEntries(baseParams), outFields: 'FLD_ZONE', where: '1=1' })}`).then(r => r.json()),
+      fetch(`/wetlands-query?${new URLSearchParams({ ...Object.fromEntries(baseParams), outFields: 'WETLAND_TYPE,ATTRIBUTE', where: '1=1' })}`).then(r => r.json()),
+    ]);
+
+    // Build a set of flood zone designations from the bbox — apply centroid point-in-polygon
+    // Since returnGeometry=false, we approximate: mark all result parcels with the most common
+    // flood zone type in the bbox. For accurate per-parcel data, returnGeometry must be true.
+    // TODO: Refetch with returnGeometry=true and run turf.booleanPointInPolygon per parcel.
+    // For now: mark parcels as "needs review" if any flood features exist in their bbox.
+
+    // Phase 1 approximation: re-fetch with geometry, check centroid per parcel
+    const geomBaseParams = new URLSearchParams({
+      geometry: geomParam, geometryType: 'esriGeometryEnvelope',
+      spatialRel: 'esriSpatialRelIntersects', inSR: '4326',
+      returnGeometry: 'true', outSR: '4326', f: 'geojson', where: '1=1'
+    });
+
+    const [floodGeoRes, nwiGeoRes] = await Promise.allSettled([
+      fetch(`/flood-query?${new URLSearchParams({ ...Object.fromEntries(geomBaseParams), outFields: 'FLD_ZONE' })}`).then(r => r.json()),
+      fetch(`/wetlands-query?${new URLSearchParams({ ...Object.fromEntries(geomBaseParams), outFields: 'WETLAND_TYPE' })}`).then(r => r.json()),
+    ]);
+
+    const floodFeatures = floodGeoRes.status === 'fulfilled' ? (floodGeoRes.value.features || []) : [];
+    const nwiFeatures   = nwiGeoRes.status   === 'fulfilled' ? (nwiGeoRes.value.features   || []) : [];
+
+    S.waterFeatures = nwiFeatures; // reuse for water proximity filter
+
+    for (const feature of S.parcels) {
+      const fid = feature.properties.parcelfid;
+      if (!feature._centroid) continue;
+      const pt = turf.point([feature._centroid.lng, feature._centroid.lat]);
+
+      let floodZone = 'NONE';
+      for (const ff of floodFeatures) {
+        if (!ff.geometry) continue;
+        try { if (turf.booleanPointInPolygon(pt, ff)) { floodZone = ff.properties.FLD_ZONE || 'UNKNOWN'; break; } } catch {}
+      }
+      let wetlands = false;
+      for (const wf of nwiFeatures) {
+        if (!wf.geometry) continue;
+        try { if (turf.booleanPointInPolygon(pt, wf)) { wetlands = true; break; } } catch {}
+      }
+
+      const e = S.enrichment.get(fid) || {};
+      e.floodZone = floodZone;
+      e.wetlands  = wetlands;
+      S.enrichment.set(fid, e);
+
+      // Update list item dist span (flood/wetlands don't show in list, but check popup)
+      patchOpenPopup(fid);
+    }
+
+    // If water filter is checked, apply it now that we have water features
+    if (document.getElementById('waterOnly').checked) {
+      markWaterAdjacent();
+      applyClientFilters();
+    }
+
+    S.floodDone = true;
+    updateResultsCount();
+  } catch (err) {
+    console.warn('Flood/wetlands pass failed:', err.message);
+    S.floodDone = true;
+  }
+}
+
+async function runNeighborPass(bbox) {
+  try {
+    const [minLng, minLat, maxLng, maxLat] = bbox;
+    const parcelsForQuery = S.parcels
+      .filter(f => f._centroid)
+      .map(f => ({ parcelfid: f.properties.PARCELID, lat: f._centroid.lat, lng: f._centroid.lng }));
+
+    const res  = await fetch('/neighbor-query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bbox: [minLng, minLat, maxLng, maxLat], parcels: parcelsForQuery })
+    });
+    const data = await res.json();
+
+    for (const r of data) {
+      const e = S.enrichment.get(r.parcelfid) || {};
+      e.nearestDistanceFt = r.nearestDistanceFt;
+      e.nearestDistanceMi = r.nearestDistanceMi;
+      S.enrichment.set(r.parcelfid, e);
+
+      // Update list item distance span
+      const distEl = document.getElementById(`li-dist-${r.parcelfid}`);
+      if (distEl) distEl.textContent = r.nearestDistanceFt != null ? fmtDist(r.nearestDistanceFt, r.nearestDistanceMi) : '—';
+
+      patchOpenPopup(r.parcelfid);
+    }
+
+    S.neighborDone = true;
+    document.getElementById('distFilterNote').textContent = '';
+    applyClientFilters();
+    updateResultsCount();
+  } catch (err) {
+    console.warn('Neighbor pass failed:', err.message);
+    S.neighborDone = true;
+  }
+}
+
+async function runAssessorPass() {
+  const byCounty = {};
+  for (const f of S.parcels) {
+    const c = f.properties.CONAME || '';
+    if (!byCounty[c]) byCounty[c] = [];
+    byCounty[c].push({ parcelfid: f.properties.PARCELID, siteadress: f.properties.SITEADRESS, cityname: f.properties.PLACENAME });
+  }
+
+  await Promise.allSettled(Object.entries(byCounty).map(async ([county, parcels]) => {
+    S.assessorStatus[county] = 'loading';
+    updateAssessorStatus();
+    try {
+      const res  = await fetch('/assessor-query', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ county, parcels })
+      });
+      const data = await res.json();
+      if (data.error && !data.results) {
+        S.assessorStatus[county] = 'stub'; // scraper not yet implemented for this county
+      } else {
+        for (const r of (data.results || [])) {
+          const e = S.enrichment.get(r.parcelfid) || {};
+          Object.assign(e, { bedrooms: r.bedrooms, sqft: r.sqft, yearBuilt: r.yearBuilt });
+          S.enrichment.set(r.parcelfid, e);
+          patchOpenPopup(r.parcelfid);
+          const li = S.listItems.get(r.parcelfid);
+          if (li) li.innerHTML = listItemHTML(S.featureMap.get(r.parcelfid));
+        }
+        S.assessorStatus[county] = 'done';
+      }
+    } catch { S.assessorStatus[county] = 'error'; }
+    updateAssessorStatus();
+    applyClientFilters();
+  }));
+}
+
+function updateAssessorStatus() {
+  const el   = document.getElementById('assessor-status');
+  const parts = Object.entries(S.assessorStatus).map(([c, st]) => {
+    const cls = st === 'done' ? 'ast-done' : st === 'loading' ? 'ast-loading' : st === 'stub' ? 'ast-stub' : 'ast-error';
+    const icon = st === 'done' ? '✓' : st === 'loading' ? '…' : st === 'stub' ? '—' : '✗';
+    return `<span class="${cls}">${titleCase(c)}:${icon}</span>`;
+  });
+  el.innerHTML = parts.join('');
+}
+
+// ── Water proximity ────────────────────────────────────────────────────────────
+async function onWaterFilterChange() {
+  if (!document.getElementById('waterOnly').checked) {
+    applyClientFilters();
+    return;
+  }
+  if (!S.waterFeatures) {
+    // Water features fetched during flood pass; if not done yet, wait
+    if (!S.floodDone) { applyClientFilters(); return; }
+    // Fetch independently if flood pass hasn't run yet
+    await fetchWaterFeatures();
+  }
+  markWaterAdjacent();
+  applyClientFilters();
+}
+
+async function fetchWaterFeatures() {
+  try {
+    const bbox = computeBbox();
+    const [minLng, minLat, maxLng, maxLat] = bbox;
+    const geomParam = JSON.stringify({ xmin: minLng, ymin: minLat, xmax: maxLng, ymax: maxLat, spatialReference: { wkid: 4326 } });
+    const res = await fetch(`/water-query?${new URLSearchParams({
+      geometry: geomParam, geometryType: 'esriGeometryEnvelope',
+      spatialRel: 'esriSpatialRelIntersects', inSR: '4326',
+      returnGeometry: 'true', outSR: '4326', outFields: 'OBJECTID', where: '1=1'
+    })}`);
+    const data = await res.json();
+    S.waterFeatures = data.features || [];
+  } catch { S.waterFeatures = []; }
+}
+
+function markWaterAdjacent() {
+  if (!S.waterFeatures) return;
+  for (const f of S.parcels) {
+    if (!f._centroid) continue;
+    const pt = turf.point([f._centroid.lng, f._centroid.lat]);
+    let adj = false;
+    for (const wf of S.waterFeatures) {
+      if (!wf.geometry) continue;
+      try { if (turf.booleanPointInPolygon(pt, wf)) { adj = true; break; } } catch {}
+    }
+    f._waterAdjacent = adj;
+  }
+}
+
+// ── Client-side filtering ──────────────────────────────────────────────────────
+function passesClientFilters(feature) {
+  const p   = feature.properties;
+  const fid = p.parcelfid;
+  const e   = S.enrichment.get(fid) || {};
+
+  if (document.getElementById('absenteeOnly').checked && !isAbsentee(p)) return false;
+
+  if (document.getElementById('waterOnly').checked) {
+    if (feature._waterAdjacent === undefined) return true; // not yet determined — keep visible
+    if (!feature._waterAdjacent) return false;
+  }
+
+  const minDistRaw = parseFloat(document.getElementById('minDist').value);
+  if (!isNaN(minDistRaw) && minDistRaw > 0 && S.neighborDone) {
+    const unit = document.getElementById('distUnit').value;
+    const minFt = unit === 'mi' ? minDistRaw * 5280 : minDistRaw;
+    if (e.nearestDistanceFt != null && e.nearestDistanceFt < minFt) return false;
+  }
+
+  const minBr = parseInt(document.getElementById('minBedrooms').value, 10);
+  if (!isNaN(minBr) && minBr > 0) {
+    const county = (p.coname || '').toUpperCase();
+    if (S.assessorStatus[county] === 'done') {
+      if (e.bedrooms != null && e.bedrooms < minBr) return false;
+    }
+  }
+
+  return true;
+}
+
+function applyClientFilters() {
+  const showHid = document.getElementById('showHidden').checked;
+  const toAdd = [], toRemove = [];
+
+  for (const [fid, feature] of S.featureMap.entries()) {
+    const isHid  = S.hidden.has(fid);
+    const passes = passesClientFilters(feature);
+    const shouldBeInCluster = !isHid && passes;
+
+    if (shouldBeInCluster && !S.inCluster.has(fid)) {
+      toAdd.push(S.allMarkers.get(fid));
+      S.inCluster.add(fid);
+    } else if (!shouldBeInCluster && S.inCluster.has(fid)) {
+      toRemove.push(S.allMarkers.get(fid));
+      S.inCluster.delete(fid);
+    }
+
+    // List item visibility
+    const li = S.listItems.get(fid);
+    if (li) {
+      const visible = passes && (!isHid || showHid);
+      li.style.display = visible ? '' : 'none';
+    }
+  }
+
+  if (toRemove.length) clusterGroup.removeLayers(toRemove);
+  if (toAdd.length)    clusterGroup.addLayers(toAdd);
+  updateResultsCount();
+}
+
+// ── Hide / unhide ──────────────────────────────────────────────────────────────
+window.toggleHidden = async function(fid) {
+  const nowHiding = !S.hidden.has(fid);
+  if (nowHiding) {
+    S.hidden.add(fid);
+    await fetch(`/hidden/${encodeURIComponent(fid)}`, { method: 'POST' });
+  } else {
+    S.hidden.delete(fid);
+    await fetch(`/hidden/${encodeURIComponent(fid)}`, { method: 'DELETE' });
+  }
+  document.getElementById('hiddenCount').textContent = S.hidden.size;
+
+  const feature = S.featureMap.get(fid);
+  const li = S.listItems.get(fid);
+
+  if (nowHiding) {
+    // Remove from cluster, optionally show in hiddenGroup
+    if (S.inCluster.has(fid)) {
+      clusterGroup.removeLayer(S.allMarkers.get(fid));
+      S.inCluster.delete(fid);
+    }
+    if (document.getElementById('showHidden').checked) {
+      const hm = buildHiddenMarker(feature);
+      S.hiddenMarkers.set(fid, hm);
+      hiddenGroup.addLayer(hm);
+    }
+    if (li) { li.classList.add('is-hidden'); if (!document.getElementById('showHidden').checked) li.style.display = 'none'; }
+  } else {
+    // Remove from hiddenGroup, add back to cluster
+    if (S.hiddenMarkers.has(fid)) { hiddenGroup.removeLayer(S.hiddenMarkers.get(fid)); S.hiddenMarkers.delete(fid); }
+    if (passesClientFilters(feature)) {
+      clusterGroup.addLayer(S.allMarkers.get(fid));
+      S.inCluster.add(fid);
+    }
+    if (li) { li.classList.remove('is-hidden'); li.style.display = ''; }
+  }
+
+  // Rebuild popup to reflect new hidden state
+  if (S.openPopupFid === fid) {
+    const marker = S.allMarkers.get(fid);
+    if (marker) {
+      marker.bindPopup(L.popup({ maxWidth: 340 }).setContent(buildPopupHTML(feature))).openPopup();
+    }
+  }
+  updateResultsCount();
+};
+
+async function clearAllHidden() {
+  if (!confirm(`Clear all ${S.hidden.size} hidden properties?`)) return;
+  await fetch('/hidden', { method: 'DELETE' });
+  const wasHidden = [...S.hidden];
+  S.hidden.clear();
+  document.getElementById('hiddenCount').textContent = 0;
+
+  for (const fid of wasHidden) {
+    if (S.hiddenMarkers.has(fid)) { hiddenGroup.removeLayer(S.hiddenMarkers.get(fid)); S.hiddenMarkers.delete(fid); }
+    const feature = S.featureMap.get(fid);
+    if (feature && passesClientFilters(feature)) {
+      clusterGroup.addLayer(S.allMarkers.get(fid));
+      S.inCluster.add(fid);
+    }
+    const li = S.listItems.get(fid);
+    if (li) { li.classList.remove('is-hidden'); li.style.display = ''; }
+  }
+  updateResultsCount();
+}
+
+function onShowHiddenToggle() {
+  const show = document.getElementById('showHidden').checked;
+  if (show) {
+    map.addLayer(hiddenGroup);
+    for (const [fid] of S.featureMap.entries()) {
+      if (S.hidden.has(fid)) {
+        const li = S.listItems.get(fid);
+        if (li && passesClientFilters(S.featureMap.get(fid))) li.style.display = '';
+      }
+    }
+  } else {
+    map.removeLayer(hiddenGroup);
+    for (const [fid] of S.featureMap.entries()) {
+      if (S.hidden.has(fid)) {
+        const li = S.listItems.get(fid);
+        if (li) li.style.display = 'none';
+      }
+    }
+  }
+}
+
+// ── Focus parcel (bidirectional link) ─────────────────────────────────────────
+function focusParcel(fid) {
+  const marker = S.allMarkers.get(fid);
+  if (!marker) return;
+  clusterGroup.zoomToShowLayer(marker, () => {
+    marker.fire('click');
+  });
+  highlightListItem(fid);
+}
+
+function highlightListItem(fid) {
+  document.querySelectorAll('.list-item.highlighted').forEach(el => el.classList.remove('highlighted'));
+  const li = S.listItems.get(fid);
+  if (li) { li.classList.add('highlighted'); li.scrollIntoView({ block: 'nearest' }); }
+}
+
+// ── Sort ───────────────────────────────────────────────────────────────────────
+function toggleSort() {
+  S.currentSort = S.currentSort === 'asc' ? 'desc' : 'asc';
+  document.getElementById('sortBtn').textContent = `EMV ${S.currentSort === 'asc' ? '▲' : '▼'}`;
+  const list  = document.getElementById('results-list');
+  const items = [...list.children].reverse();
+  items.forEach(item => list.appendChild(item));
+}
+
+// ── Export CSV ────────────────────────────────────────────────────────────────
+function exportCSV() {
+  const cols = ['Owner','Co-Owner','Owner Mailing Address','Property Address','County','City',
+    'Est.FMV(API)','Est.Market Value','GIS Acres','Net Tax','Land Value','Improvement Value',
+    'Property Class','Parcel ID','Bedrooms','Sq Ft','Year Built',
+    'Flood Zone','Wetlands','Nearest House (ft)','Nearest House (mi)','Absentee Owner'];
+
+  const rows = S.parcels
+    .filter(f => !S.hidden.has(f.properties.PARCELID) && passesClientFilters(f))
+    .map(f => {
+      const p   = f.properties;
+      const fid = p.PARCELID;
+      const e   = S.enrichment.get(fid) || {};
+      const emv = p.ESTFMKVALUE ? Math.round(p.ESTFMKVALUE / (getRatioForParcel(p) / 100)) : '';
+      const acres = p.GISACRES ?? p.ASSDACRES ?? p.DEEDACRES ?? '';
+      return [
+        p.OWNERNME1||'', p.OWNERNME2||'', p.PSTLADRESS||'', getAddress(p),
+        p.CONAME||'', p.PLACENAME||'',
+        p.ESTFMKVALUE||'', emv, acres, p.NETPRPTA||'', p.LNDVALUE||'', p.IMPVALUE||'',
+        p.PROPCLASS||'', fid||'',
+        e.bedrooms??'', e.sqft??'', e.yearBuilt??'',
+        e.floodZone||'', e.wetlands!=null?(e.wetlands?'Yes':'No'):'',
+        e.nearestDistanceFt??'', e.nearestDistanceMi??'',
+        isAbsentee(p)?'Yes':'No'
+      ].map(csvCell);
+    });
+
+  const csv = [cols, ...rows].map(r => r.join(',')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(blob), download: 'parcels.csv'
+  });
+  a.click(); URL.revokeObjectURL(a.href);
+}
+function csvCell(v) {
+  const s = String(v ?? '');
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// ── Results header ────────────────────────────────────────────────────────────
+function updateResultsCount() {
+  const visible   = S.parcels.filter(f => S.inCluster.has(f.properties.PARCELID) || (S.hidden.has(f.properties.PARCELID) && document.getElementById('showHidden').checked && passesClientFilters(f)));
+  const absentees = visible.filter(f => isAbsentee(f.properties));
+  document.getElementById('results-count').textContent =
+    `${visible.length.toLocaleString()} results · ${absentees.length.toLocaleString()} absentee`;
+}
+
+// ── Progress bar ──────────────────────────────────────────────────────────────
+function showProgressBar(pct) {
+  const pb = document.getElementById('progress-bar');
+  pb.style.display = 'block';
+  pb.style.width = `${Math.max(5, Math.min(100, (pct * 100)))}%`;
+}
+function hideProgressBar() {
+  const pb = document.getElementById('progress-bar');
+  pb.style.width = '100%';
+  setTimeout(() => { pb.style.display = 'none'; pb.style.width = '0%'; }, 400);
+}
+
+// ── Clear results ─────────────────────────────────────────────────────────────
+function clearResults() {
+  clusterGroup.clearLayers();
+  hiddenGroup.clearLayers();
+  document.getElementById('results-list').innerHTML = '';
+  document.getElementById('assessor-status').textContent = '';
+  S.parcels        = [];
+  S.featureMap     = new Map();
+  S.enrichment     = new Map();
+  S.allMarkers     = new Map();
+  S.inCluster      = new Set();
+  S.hiddenMarkers  = new Map();
+  S.listItems      = new Map();
+  S.assessorStatus = {};
+  S.neighborDone   = false;
+  S.floodDone      = false;
+  S.waterFeatures  = null;
+  S.totalCount     = null;
+  S.loadedCount    = 0;
+  S.openPopupFid   = null;
+}
+
+// ── Geometry helpers ──────────────────────────────────────────────────────────
+function computeCentroid(geom) {
+  if (!geom) return null;
+  let coords;
+  if      (geom.type === 'Polygon')      coords = geom.coordinates[0];
+  else if (geom.type === 'MultiPolygon') coords = geom.coordinates[0][0];
+  else return null;
+  if (!coords || coords.length === 0) return null;
+  let slng = 0, slat = 0;
+  for (const c of coords) { slng += c[0]; slat += c[1]; }
+  return { lat: slat / coords.length, lng: slng / coords.length };
+}
+
+function computeBbox() {
+  let minLng=Infinity, minLat=Infinity, maxLng=-Infinity, maxLat=-Infinity;
+  for (const f of S.parcels) {
+    if (!f._centroid) continue;
+    const { lat, lng } = f._centroid;
+    if (lng < minLng) minLng = lng; if (lng > maxLng) maxLng = lng;
+    if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
+  }
+  return [minLng, minLat, maxLng, maxLat];
+}
+
+// ── Formatting helpers ─────────────────────────────────────────────────────────
+function fmtMoney(n) {
+  if (n == null || n === '') return '—';
+  return '$' + Math.round(n).toLocaleString();
+}
+function fmtAcres(n) {
+  if (n == null) return '—';
+  return parseFloat(n).toFixed(1) + ' ac';
+}
+function fmtDist(ft, mi) {
+  if (ft == null) return '—';
+  if (ft < 500) return `${ft.toLocaleString()} ft`;
+  return `${mi != null ? mi.toFixed(1) : (ft/5280).toFixed(1)} mi`;
+}
+function getAddress(p) {
+  if (p.SITEADRESS) return p.SITEADRESS;
+  const parts = [p.ADDNUMPREFIX, p.ADDNUM, p.ADDNUMSUFFIX, p.PREFIX, p.STREETNAME, p.STREETTYPE, p.SUFFIX];
+  const joined = parts.filter(Boolean).join(' ');
+  return joined || '(no address)';
+}
+function isAbsentee(p) {
+  if (!p.PSTLADRESS || !p.SITEADRESS) return false;
+  return p.PSTLADRESS.trim().toUpperCase() !== p.SITEADRESS.trim().toUpperCase();
+}
+function titleCase(s) { return s.charAt(0) + s.slice(1).toLowerCase(); }
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────────
+initApp();
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:services3.arcgis.com)",
+      "WebFetch(domain:fwspublicservices.wim.usgs.gov)",
+      "WebFetch(domain:hazards.fema.gov)",
+      "WebFetch(domain:data-waukeshacounty.opendata.arcgis.com)",
+      "WebFetch(domain:gis-countyofdane.opendata.arcgis.com)",
+      "WebFetch(domain:www.revenue.wi.gov)",
+      "WebFetch(domain:services.arcgis.com)",
+      "WebFetch(domain:gisdata-jeffcowa.opendata.arcgis.com)",
+      "WebFetch(domain:gis.waukeshacounty.gov)",
+      "WebFetch(domain:www.cityofmadison.com)",
+      "Bash(node --check server.js)"
+    ]
+  }
+}
