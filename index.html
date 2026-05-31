@@ -760,20 +760,26 @@ function listItemHTML(feature) {
 // ── Popup ──────────────────────────────────────────────────────────────────────
 function onMarkerClick(fid) {
   const feature = S.featureMap.get(fid);
-  if (!feature) return;
+  if (!feature || !feature._centroid) return;
   S.openPopupFid = fid;
 
-  const marker = S.allMarkers.get(fid);
+  const marker = S.allMarkers.get(fid) || S.hiddenMarkers.get(fid);
   if (!marker) return;
 
-  // Scroll list to item
   const li = S.listItems.get(fid);
   if (li) { li.scrollIntoView({ block: 'nearest' }); highlightListItem(fid); }
 
-  // Build popup and open it
-  const popup = L.popup({ maxWidth: 340 }).setContent(buildPopupHTML(feature));
-  popup.on('remove', () => { S.openPopupFid = null; });
-  marker.bindPopup(popup).openPopup();
+  openPopupAt(fid, feature);
+}
+
+function openPopupAt(fid, feature) {
+  const latlng = L.latLng(feature._centroid.lat, feature._centroid.lng);
+  S.openPopupFid = fid;
+  const popup = L.popup({ maxWidth: 340 })
+    .setLatLng(latlng)
+    .setContent(buildPopupHTML(feature))
+    .openOn(map);
+  popup.on('remove', () => { if (S.openPopupFid === fid) S.openPopupFid = null; });
 }
 
 function buildPopupHTML(feature) {
@@ -1226,22 +1232,21 @@ function onShowHiddenToggle() {
 // ── Focus parcel (bidirectional link) ─────────────────────────────────────────
 function focusParcel(fid) {
   highlightListItem(fid);
+  const feature = S.featureMap.get(fid);
+  if (!feature || !feature._centroid) return;
 
-  const isHid    = S.hidden.has(fid);
-  const marker   = isHid ? S.hiddenMarkers.get(fid) : S.allMarkers.get(fid);
-  if (!marker) return;
+  const latlng     = L.latLng(feature._centroid.lat, feature._centroid.lng);
+  const targetZoom = Math.max(map.getZoom(), 14);
 
-  const latlng    = marker.getLatLng();
-  const zoomLevel = Math.max(map.getZoom(), 14);
-
-  if (!isHid && S.inCluster.has(fid)) {
-    clusterGroup.zoomToShowLayer(marker, () => {
-      map.flyTo(latlng, zoomLevel);
-      setTimeout(() => marker.fire('click'), 500);
-    });
+  if (map.getZoom() >= targetZoom && map.getBounds().contains(latlng)) {
+    // Already in view — open popup immediately, no animation needed
+    openPopupAt(fid, feature);
   } else {
-    map.flyTo(latlng, zoomLevel);
-    setTimeout(() => marker.fire('click'), 500);
+    // Fly to parcel first; open popup once the map settles.
+    // Using once('moveend') means the popup opens after the single flyTo
+    // animation completes — no double-animation, no cluster flash.
+    map.once('moveend', () => openPopupAt(fid, feature));
+    map.flyTo(latlng, targetZoom);
   }
 }
 
