@@ -745,7 +745,7 @@ function listItemHTML(feature) {
   const emv = p.ESTFMKVALUE ? Math.round(p.ESTFMKVALUE / (getRatioForParcel(p) / 100)) : null;
   const ab  = isAbsentee(p);
   const distHtml = e.nearestDistanceFt != null
-    ? `<span class="list-dist">${fmtDist(e.nearestDistanceFt, e.nearestDistanceMi)}</span>`
+    ? `<span class="list-dist">${e.nearestDistanceFt.toLocaleString()} ft</span>`
     : (S.neighborDone ? '' : `<span class="list-dist" id="li-dist-${CSS.escape(fid)}">—</span>`);
   return `
     <div class="list-addr">${esc(getAddress(p))}</div>
@@ -800,7 +800,7 @@ function buildPopupHTML(feature) {
     ? (e.wetlands ? '<span style="color:#b45309">Yes</span>' : 'No')
     : (S.floodDone ? 'No' : '<span id="pu-wet-' + fid + '">loading…</span>');
   const distVal = e.nearestDistanceFt != null
-    ? fmtDist(e.nearestDistanceFt, e.nearestDistanceMi)
+    ? `${e.nearestDistanceFt.toLocaleString()} ft`
     : (S.neighborDone ? '—' : '<span id="pu-dist-' + fid + '">loading…</span>');
   const bedroomsVal = e.bedrooms != null ? e.bedrooms
     : (S.assessorStatus[(p.CONAME||'')] === 'done' ? '—' : '<span id="pu-br-' + fid + '">loading…</span>');
@@ -857,7 +857,7 @@ function patchOpenPopup(fid) {
     set(`pu-wet-${fid}`,   e.wetlands ? '<span style="color:#b45309">Yes</span>' : 'No');
   }
   if (e.nearestDistanceFt != null) {
-    set(`pu-dist-${fid}`, fmtDist(e.nearestDistanceFt, e.nearestDistanceMi));
+    set(`pu-dist-${fid}`, `${e.nearestDistanceFt.toLocaleString()} ft`);
   }
   if (e.bedrooms != null || S.assessorStatus[county] === 'done') {
     set(`pu-br-${fid}`, e.bedrooms != null ? String(e.bedrooms) : '—');
@@ -869,7 +869,7 @@ async function runEnrichmentPasses(bbox) {
   document.getElementById('assessor-status').textContent = 'Enriching: flood/wetlands, neighbor distance, assessor…';
   await Promise.allSettled([
     runFloodWetlandsPass(bbox),
-    runNeighborPass(bbox),
+    runNeighborPass(),
     runAssessorPass(),
   ]);
   document.getElementById('assessor-status').textContent = 'Enrichment complete.';
@@ -952,19 +952,24 @@ async function runFloodWetlandsPass(bbox) {
   }
 }
 
-async function runNeighborPass(bbox) {
+async function runNeighborPass() {
   try {
-    const [minLng, minLat, maxLng, maxLat] = bbox;
     const parcelsForQuery = S.parcels
       .filter(f => f._centroid)
-      .map(f => ({ parcelfid: f.properties.PARCELID, lat: f._centroid.lat, lng: f._centroid.lng }));
+      .map(f => ({
+        parcelfid: f.properties.PARCELID,
+        lat:       f._centroid.lat,
+        lng:       f._centroid.lng,
+        acres:     f.properties.GISACRES ?? f.properties.ASSDACRES ?? f.properties.DEEDACRES ?? 4,
+      }));
 
     const res  = await fetch('/neighbor-query', {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bbox: [minLng, minLat, maxLng, maxLat], parcels: parcelsForQuery })
+      body:    JSON.stringify({ parcels: parcelsForQuery }),
     });
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Neighbor query failed (${res.status})`);
 
     for (const r of data) {
       const e = S.enrichment.get(r.parcelfid) || {};
@@ -974,7 +979,7 @@ async function runNeighborPass(bbox) {
 
       // Update list item distance span
       const distEl = document.getElementById(`li-dist-${r.parcelfid}`);
-      if (distEl) distEl.textContent = r.nearestDistanceFt != null ? fmtDist(r.nearestDistanceFt, r.nearestDistanceMi) : '—';
+      if (distEl) distEl.textContent = r.nearestDistanceFt != null ? `${r.nearestDistanceFt.toLocaleString()} ft` : '—';
 
       patchOpenPopup(r.parcelfid);
     }

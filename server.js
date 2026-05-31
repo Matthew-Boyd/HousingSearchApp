@@ -1,17 +1,29 @@
 'use strict';
 
-const express = require('express');
-const cors    = require('cors');
-const fs      = require('fs');
-const path    = require('path');
-const ExcelJS = require('exceljs');
-const fetch   = require('node-fetch');
-const cheerio = require('cheerio');
+const express  = require('express');
+const cors     = require('cors');
+const fs       = require('fs');
+const path     = require('path');
+const readline = require('readline');
+const ExcelJS  = require('exceljs');
+const fetch    = require('node-fetch');
+const cheerio  = require('cheerio');
 
 const app  = express();
 const PORT = 3000;
 
-const HIDDEN_FILE = path.join(__dirname, 'hidden.json');
+const HIDDEN_FILE    = path.join(__dirname, 'hidden.json');
+const BUILDINGS_FILE = path.join(__dirname, 'buildings.geojson');
+
+// Spatial grid cell size (degrees). 0.05° ≈ 3.5 km lat / 4.3 km lng at 43°N.
+const CELL = 0.05;
+
+// Bounding box enclosing all 9 target counties with a small margin.
+const BLDG_BBOX = { minLat: 42.2, maxLat: 44.0, minLng: -90.3, maxLng: -87.9 };
+
+// Grid populated at startup from buildings.geojson.
+// Key: "rowIndex|colIndex"  Value: [{lat, lng}, …]
+const buildingGrid = new Map();
 
 const SCO_URL           = 'https://services3.arcgis.com/n6uYoouQZW75n5WI/arcgis/rest/services/Wisconsin_Statewide_Parcels/FeatureServer/0/query';
 const FEMA_URL          = 'https://services.arcgis.com/2gdL2gxYNFY2TOUb/arcgis/rest/services/FEMA_National_Flood_Hazard_Layer/FeatureServer/0/query';
@@ -176,98 +188,109 @@ app.get('/wetlands-query', async (req, res) => {
 });
 
 // ─── POST /neighbor-query ─────────────────────────────────────────────────────
-// Accepts:
-//   { bbox: [minX,minY,maxX,maxY], parcels: [{parcelfid,lat,lng}, …] }
-// Returns:
-//   [{parcelfid, nearestDistanceFt, nearestDistanceMi}, …]
-// Parcels with no neighbors within the bbox get null distances.
+// Accepts: { parcels: [{parcelfid, lat, lng, acres}, …] }
+// Returns: [{parcelfid, nearestDistanceFt, nearestDistanceMi}, …]
+// All computation is local — no external API call. Requires buildings.geojson.
 app.post('/neighbor-query', async (req, res) => {
   try {
-    const { bbox, parcels } = req.body;
-    if (!bbox || !Array.isArray(parcels) || parcels.length === 0) {
-      return res.json([]);
+    const { parcels } = req.body;
+    if (!Array.isArray(parcels) || parcels.length === 0) return res.json([]);
+    if (buildingGrid.size === 0) {
+      return res.status(503).json({
+        error: 'Building footprint data not loaded. Download Wisconsin.geojson.zip from ' +
+               'https://github.com/microsoft/USBuildingFootprints, unzip, rename to ' +
+               'buildings.geojson, place in the project directory, and restart the server.'
+      });
     }
-    const [minX, minY, maxX, maxY] = bbox;
-    const neighbors = await fetchAllNeighborCentroids(minX, minY, maxX, maxY);
-
-    // Spatial grid index: 0.05° cells (~2.5 mi) so we only check the 3×3 surrounding
-    // cells for each result parcel instead of comparing against all neighbors.
-    const CELL = 0.05;
-    const grid  = new Map();
-    for (const n of neighbors) {
-      const key = `${Math.floor(n.lat / CELL)}|${Math.floor(n.lng / CELL)}`;
-      if (!grid.has(key)) grid.set(key, []);
-      grid.get(key).push(n);
-    }
-
     const results = parcels.map(p => {
-      let minDist = Infinity;
-      const baseR = Math.floor(p.lat / CELL);
-      const baseC = Math.floor(p.lng / CELL);
-      for (let dr = -1; dr <= 1; dr++) {
-        for (let dc = -1; dc <= 1; dc++) {
-          for (const n of (grid.get(`${baseR + dr}|${baseC + dc}`) || [])) {
-            if (n.parcelfid === p.parcelfid) continue;
-            const d = haversineMeters(p.lat, p.lng, n.lat, n.lng);
-            if (d < minDist) minDist = d;
-          }
-        }
-      }
-      if (minDist === Infinity) {
-        return { parcelfid: p.parcelfid, nearestDistanceFt: null, nearestDistanceMi: null };
-      }
+      // Exclude the parcel's own structure using a radius proportional to parcel size.
+      // Formula: 80% of the side length of an equivalent square, minimum 100 m.
+      const exclusionM = Math.max(100, Math.sqrt((p.acres || 4) * 4046.86) * 0.8);
+      const distM      = nearestBuildingM(p.lat, p.lng, exclusionM);
       return {
-        parcelfid:           p.parcelfid,
-        nearestDistanceFt:   Math.round(minDist * 3.28084),
-        nearestDistanceMi:   parseFloat((minDist / 1609.344).toFixed(2))
+        parcelfid:         p.parcelfid,
+        nearestDistanceFt: distM != null ? Math.round(distM * 3.28084)              : null,
+        nearestDistanceMi: distM != null ? parseFloat((distM / 1609.344).toFixed(2)) : null,
       };
     });
-
     res.json(results);
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
 });
 
-async function fetchAllNeighborCentroids(minX, minY, maxX, maxY) {
-  // V11 has LATITUDE/LONGITUDE fields — no need for returnCentroid or geometry fetch.
-  // Request these fields directly with returnGeometry=false for 32,000 records/page.
-  const geometry = JSON.stringify({
-    xmin: minX, ymin: minY, xmax: maxX, ymax: maxY,
-    spatialReference: { wkid: 4326 }
-  });
-  const records = [];
-  let offset = 0;
-
-  while (true) {
-    const params = new URLSearchParams({
-      where:            'IMPVALUE > 0',
-      geometry,
-      geometryType:     'esriGeometryEnvelope',
-      spatialRel:       'esriSpatialRelIntersects',
-      inSR:             '4326',
-      outFields:        'PARCELID,LATITUDE,LONGITUDE',
-      returnGeometry:   'false',
-      outSR:            '4326',
-      f:                'json',
-      resultOffset:      String(offset),
-      resultRecordCount: '32000'
-    });
-
-    const data = await fetchJSON(`${SCO_URL}?${params}`);
-    if (!data.features || data.features.length === 0) break;
-
-    for (const f of data.features) {
-      const { PARCELID, LATITUDE, LONGITUDE } = f.attributes;
-      if (LATITUDE && LONGITUDE) {
-        records.push({ parcelfid: PARCELID, lat: LATITUDE, lng: LONGITUDE });
+// Search a 5×5 grid neighbourhood (~8 km radius) for the nearest building
+// whose centroid is at least exclusionM metres from the parcel centroid.
+function nearestBuildingM(lat, lng, exclusionM) {
+  const baseR = Math.floor(lat / CELL);
+  const baseC = Math.floor(lng / CELL);
+  let minDist = Infinity;
+  for (let dr = -2; dr <= 2; dr++) {
+    for (let dc = -2; dc <= 2; dc++) {
+      for (const b of (buildingGrid.get(`${baseR + dr}|${baseC + dc}`) || [])) {
+        const d = haversineMeters(lat, lng, b.lat, b.lng);
+        if (d < exclusionM) continue;
+        if (d < minDist) minDist = d;
       }
     }
-    if (data.features.length < 32000) break;
-    offset += 32000;
+  }
+  return minDist === Infinity ? null : minDist;
+}
+
+// ─── Building footprint loader ────────────────────────────────────────────────
+// Reads buildings.geojson (Microsoft USBuildingFootprints Wisconsin file,
+// standard GeoJSON FeatureCollection with one feature per line).
+// Filters to the 9-county bounding box and indexes centroids into buildingGrid.
+async function loadBuildingFootprints() {
+  if (!fs.existsSync(BUILDINGS_FILE)) {
+    console.warn('[buildings] buildings.geojson not found — nearest-structure distances disabled');
+    console.warn('[buildings] Get it: download Wisconsin.geojson.zip from');
+    console.warn('[buildings]   https://github.com/microsoft/USBuildingFootprints');
+    console.warn('[buildings] unzip → rename to buildings.geojson → place in project dir → restart');
+    return;
   }
 
-  return records;
+  console.log('[buildings] Loading building footprints…');
+  const rl = readline.createInterface({
+    input: fs.createReadStream(BUILDINGS_FILE),
+    crlfDelay: Infinity,
+  });
+
+  let count = 0;
+  for await (const line of rl) {
+    const t = line.trim();
+    if (!t || t === '[' || t === ']') continue;
+    // Skip the FeatureCollection wrapper line
+    if (t.includes('"FeatureCollection"')) continue;
+    const json = t.endsWith(',') ? t.slice(0, -1) : t;
+    try {
+      const feat = JSON.parse(json);
+      if (!feat.geometry) continue;
+      const c = geojsonCentroid(feat.geometry);
+      if (!c) continue;
+      const { lat, lng } = c;
+      if (lat < BLDG_BBOX.minLat || lat > BLDG_BBOX.maxLat ||
+          lng < BLDG_BBOX.minLng || lng > BLDG_BBOX.maxLng) continue;
+      const key = `${Math.floor(lat / CELL)}|${Math.floor(lng / CELL)}`;
+      if (!buildingGrid.has(key)) buildingGrid.set(key, []);
+      buildingGrid.get(key).push({ lat, lng });
+      count++;
+    } catch {}
+  }
+
+  console.log(`[buildings] Loaded ${count.toLocaleString()} buildings in ${buildingGrid.size} grid cells`);
+}
+
+function geojsonCentroid(geom) {
+  if (!geom) return null;
+  let coords;
+  if      (geom.type === 'Polygon')      coords = geom.coordinates[0];
+  else if (geom.type === 'MultiPolygon') coords = geom.coordinates[0][0];
+  else return null;
+  if (!coords || !coords.length) return null;
+  let slng = 0, slat = 0;
+  for (const c of coords) { slng += c[0]; slat += c[1]; }
+  return { lat: slat / coords.length, lng: slng / coords.length };
 }
 
 
@@ -430,9 +453,13 @@ app.delete('/hidden', (req, res) => {
 // ─── fetch helpers ────────────────────────────────────────────────────────────
 async function fetchJSON(url) {
   const res = await fetch(url, { timeout: 30000 });
-  if (!res.ok) throw new Error(`Upstream HTTP ${res.status}: ${url}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Upstream HTTP ${res.status}: ${body.slice(0, 300)}`);
+  }
   return res.json();
 }
+
 
 async function fetchHTML(url) {
   const res = await fetch(url, {
@@ -446,7 +473,7 @@ async function fetchHTML(url) {
 // ─── startup ──────────────────────────────────────────────────────────────────
 async function start() {
   initHiddenFile();
-  await loadDorRatios();
+  await Promise.all([loadDorRatios(), loadBuildingFootprints()]);
   app.listen(PORT, () => {
     console.log(`Wisconsin Parcel Search → http://localhost:${PORT}`);
   });

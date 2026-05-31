@@ -252,14 +252,16 @@ Acreage field population observed per county (sample):
 - **WHERE clause:** Uses single filter input ratio (budget × ratio ÷ 100) for the `estfmkvalue` ceiling.
 
 ### Phase 1: Neighbor Distance Computation
-- **Data source:** SCO ArcGIS parcel API — same endpoint already in use.
-- **Method:** After all result pages are fetched, compute the bounding box of the full result set and make one additional query to the SCO API: all parcels within that bounding box with `impvalue > 0` and `returnGeometry=false`.
-- **Key finding:** SCO API returns up to **32,000 records per query when `returnGeometry=false`** (vs. 2,000 with geometry). Use this for the neighbor query to minimize pagination.
-- **Coordinates without geometry:** V11 provides `LATITUDE` and `LONGITUDE` fields directly (WGS84 centroid). Request these two fields with `returnGeometry=false` — no `returnCentroid=true` parameter or geometry-based centroid computation needed. This is what enables the 32,000-record-per-page limit for the neighbor query.
-- **Computation:** For each result parcel, find the nearest neighbor centroid (excluding itself). Compute straight-line distance in feet and miles. Done server-side.
+- **Data source:** Microsoft US Building Footprints v2 — free dataset of ~3.1M building polygons for Wisconsin derived from satellite imagery. No ongoing cost, no API calls.
+- **Download:** `Wisconsin.geojson.zip` (~817 MB uncompressed) from https://github.com/microsoft/USBuildingFootprints. One-time manual download.
+- **Setup:** Unzip → rename to `buildings.geojson` → place in project directory → restart server.
+- **Loading:** Server reads the file at startup using `readline` (streaming line-by-line). Filters centroids to the 9-county bounding box (~400K–600K buildings retained). Indexed into a 0.05° spatial grid in memory.
+- **Distance measurement:** Parcel centroid → nearest **building centroid** (not parcel centroid). This is structure-to-structure, not parcel-to-parcel.
+- **Own-structure exclusion:** The parcel's own building is excluded using a dynamic radius: `max(100 m, sqrt(acres × 4047 m²) × 0.8)`. This is approximately 80% of the side-length of an equivalent square parcel, ensuring the parcel's own house is always inside the exclusion zone regardless of where on the lot it sits.
+- **Grid lookup:** 5×5 cell neighborhood (±2 cells, ~8 km radius) searched per parcel. O(1) per parcel after startup.
 - **Display:** "Nearest house: X ft (Y mi)" in popup and sidebar list item. Drives the min distance filter.
-- **Edge cases:** Very remote parcels with no neighbors within the bounding box — show "No nearby structures found."
-- **Performance:** One bounding-box query (possibly paginated). Distance computation O(n × m) — acceptable with spatial binning for large result sets.
+- **Edge cases:** Very remote parcels with no buildings within the 5×5 neighborhood show "—".
+- **Why not SCO API:** The SCO service's hard limit is **2,000 records/query** regardless of `returnGeometry` (the "32,000 without geometry" planning assumption was wrong). A 9-county bounding box query would require ~150 pages and take 5–10 minutes. Local footprints eliminate all API calls for this feature entirely.
 
 ### Phase 1: County Assessor Databases — DECISION: Scrape county CAMA web interfaces
 **Critical finding:** All 9 county FeatureServer APIs expose the same fields as the statewide SCO API. Building characteristics (bedrooms, sq ft, year built) are in each county's CAMA (Computer-Assisted Mass Appraisal) system, which is **not publicly accessible via API** in any of the 9 target counties. County GIS portals provide land/ownership data only.
