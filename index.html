@@ -111,18 +111,29 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 .ast-error{color:#991b1b}
 .ast-stub{color:#999}
 
-/* ── List items ──────────────────────────────────────────────────────────── */
-.list-item{
-  padding:7px 10px;border-bottom:1px solid #eee;cursor:pointer;
-  transition:background .1s;
+/* ── Results table ───────────────────────────────────────────────────────── */
+#results-table{width:100%;border-collapse:collapse}
+#results-table thead th{
+  position:sticky;top:0;z-index:1;background:#f0f0f0;
+  padding:5px 8px;font-size:11px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.03em;
+  border-bottom:2px solid #ccc;white-space:nowrap;user-select:none;
 }
-.list-item:hover{background:#f0f6ff}
-.list-item.highlighted{background:#dbeafe}
+#results-table thead th.col-sortable{cursor:pointer}
+#results-table thead th.col-sortable:hover{background:#e0e8f0}
+.sort-arrow{margin-left:3px;font-size:10px}
+.list-item{cursor:pointer}
+.list-item td{padding:5px 8px;border-bottom:1px solid #eee;vertical-align:middle;transition:background .1s}
+.list-item:hover td{background:#f0f6ff}
+.list-item.highlighted td{background:#dbeafe}
 .list-item.is-hidden{opacity:.45}
-.list-addr{font-size:12px;font-weight:500;color:#222;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.list-meta{display:flex;align-items:center;gap:5px;margin-top:2px;flex-wrap:wrap}
+.col-emv-td,.col-dist-td{text-align:right;white-space:nowrap}
+.col-emv-td{width:92px}
+.col-dist-td{width:96px}
+.list-addr{font-size:12px;font-weight:500;color:#222}
+.list-badges{display:flex;gap:3px;margin-top:2px;flex-wrap:wrap}
 .list-fmv{font-size:12px;font-weight:700;color:#185FA5}
-.list-dist{font-size:11px;color:#555}
+.list-dist{font-size:12px;color:#555}
 .badge{font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px;text-transform:uppercase}
 .badge-absentee{background:#fb923c;color:#fff}
 .badge-hidden{background:#9ca3af;color:#fff}
@@ -280,12 +291,22 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
       <div id="results-header">
         <div class="rh-row">
           <span class="rh-count" id="results-count">No results</span>
-          <button class="rh-btn secondary" id="sortBtn">EMV ▲</button>
           <button class="rh-btn" id="exportBtn">Export CSV</button>
         </div>
         <div class="assessor-status" id="assessor-status"></div>
       </div>
-      <div id="results-list"></div>
+      <div id="results-list">
+        <table id="results-table">
+          <thead>
+            <tr>
+              <th class="col-addr">Address</th>
+              <th class="col-emv-td col-sortable" data-col="emv" onclick="sortBy('emv')">Est. Value ($)<span class="sort-arrow">▲</span></th>
+              <th class="col-dist-td col-sortable" data-col="dist" onclick="sortBy('dist')">Nearest House (ft)<span class="sort-arrow"></span></th>
+            </tr>
+          </thead>
+          <tbody id="results-tbody"></tbody>
+        </table>
+      </div>
     </div>
 
   </div><!-- /left-panel -->
@@ -339,7 +360,7 @@ const S = {
   isSearching:    false,
   totalCount:     null,
   loadedCount:    0,
-  currentSort:    'asc',
+  currentSort:    { col: 'emv', dir: 'asc' },
   openPopupFid:   null,
 };
 
@@ -417,7 +438,6 @@ function setupEventListeners() {
   document.getElementById('budget').addEventListener('input', updateCeilingDisplay);
   document.getElementById('ratio').addEventListener('input', updateCeilingDisplay);
   document.getElementById('searchBtn').addEventListener('click', startSearch);
-  document.getElementById('sortBtn').addEventListener('click', toggleSort);
   document.getElementById('exportBtn').addEventListener('click', exportCSV);
   document.getElementById('clearHiddenBtn').addEventListener('click', clearAllHidden);
   document.getElementById('showHidden').addEventListener('change', onShowHiddenToggle);
@@ -688,7 +708,7 @@ function addParcels(features) {
     // Build list item
     const li = buildListItem(f);
     S.listItems.set(fid, li);
-    document.getElementById('results-list').appendChild(li);
+    document.getElementById('results-tbody').appendChild(li);
     if (isHidden && !document.getElementById('showHidden').checked) {
       li.style.display = 'none';
     }
@@ -730,12 +750,16 @@ function buildHiddenMarker(feature) {
 function buildListItem(feature) {
   const p   = feature.properties;
   const fid = p.PARCELID;
-  const li  = document.createElement('div');
-  li.className = 'list-item' + (S.hidden.has(fid) ? ' is-hidden' : '');
-  li.dataset.fid = fid;
-  li.innerHTML = listItemHTML(feature);
-  li.addEventListener('click', () => focusParcel(fid));
-  return li;
+  const emv = p.ESTFMKVALUE ? Math.round(p.ESTFMKVALUE / (getRatioForParcel(p) / 100)) : null;
+  const e   = S.enrichment.get(fid) || {};
+  const tr  = document.createElement('tr');
+  tr.className = 'list-item' + (S.hidden.has(fid) ? ' is-hidden' : '');
+  tr.dataset.fid  = fid;
+  tr.dataset.emv  = emv ?? '';
+  tr.dataset.dist = e.nearestDistanceFt ?? '';
+  tr.innerHTML = listItemHTML(feature);
+  tr.addEventListener('click', () => focusParcel(fid));
+  return tr;
 }
 
 function listItemHTML(feature) {
@@ -744,17 +768,17 @@ function listItemHTML(feature) {
   const e   = S.enrichment.get(fid) || {};
   const emv = p.ESTFMKVALUE ? Math.round(p.ESTFMKVALUE / (getRatioForParcel(p) / 100)) : null;
   const ab  = isAbsentee(p);
-  const distHtml = e.nearestDistanceFt != null
-    ? `<span class="list-dist">${e.nearestDistanceFt.toLocaleString()} ft</span>`
-    : (S.neighborDone ? '' : `<span class="list-dist" id="li-dist-${CSS.escape(fid)}">—</span>`);
+  const distText = e.nearestDistanceFt != null ? `${e.nearestDistanceFt.toLocaleString()} ft` : '—';
+  const distId   = !S.neighborDone && e.nearestDistanceFt == null ? ` id="li-dist-${CSS.escape(fid)}"` : '';
+  const badges   = (ab ? '<span class="badge badge-absentee">ABSENTEE</span>' : '')
+                 + (S.hidden.has(fid) ? '<span class="badge badge-hidden">HIDDEN</span>' : '');
   return `
-    <div class="list-addr">${esc(getAddress(p))}</div>
-    <div class="list-meta">
-      <span class="list-fmv">~${fmtMoney(emv)}</span>
-      ${distHtml}
-      ${ab ? '<span class="badge badge-absentee">ABSENTEE</span>' : ''}
-      ${S.hidden.has(fid) ? '<span class="badge badge-hidden">HIDDEN</span>' : ''}
-    </div>`;
+    <td class="col-addr">
+      <div class="list-addr">${esc(getAddress(p))}</div>
+      ${badges ? `<div class="list-badges">${badges}</div>` : ''}
+    </td>
+    <td class="col-emv-td"><span class="list-fmv">~${fmtMoney(emv)}</span></td>
+    <td class="col-dist-td list-dist"${distId}>${distText}</td>`;
 }
 
 // ── Popup ──────────────────────────────────────────────────────────────────────
@@ -977,9 +1001,14 @@ async function runNeighborPass() {
       e.nearestDistanceMi = r.nearestDistanceMi;
       S.enrichment.set(r.parcelfid, e);
 
-      // Update list item distance span
+      // Update list item distance cell
       const distEl = document.getElementById(`li-dist-${r.parcelfid}`);
-      if (distEl) distEl.textContent = r.nearestDistanceFt != null ? `${r.nearestDistanceFt.toLocaleString()} ft` : '—';
+      if (distEl) {
+        distEl.textContent = r.nearestDistanceFt != null ? `${r.nearestDistanceFt.toLocaleString()} ft` : '—';
+        distEl.removeAttribute('id');
+      }
+      const row = S.listItems.get(r.parcelfid);
+      if (row) row.dataset.dist = r.nearestDistanceFt ?? '';
 
       patchOpenPopup(r.parcelfid);
     }
@@ -1262,12 +1291,41 @@ function highlightListItem(fid) {
 }
 
 // ── Sort ───────────────────────────────────────────────────────────────────────
-function toggleSort() {
-  S.currentSort = S.currentSort === 'asc' ? 'desc' : 'asc';
-  document.getElementById('sortBtn').textContent = `EMV ${S.currentSort === 'asc' ? '▲' : '▼'}`;
-  const list  = document.getElementById('results-list');
-  const items = [...list.children].reverse();
-  items.forEach(item => list.appendChild(item));
+window.sortBy = function(col) {
+  if (S.currentSort.col === col) {
+    S.currentSort.dir = S.currentSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    S.currentSort.col = col;
+    S.currentSort.dir = 'asc';
+  }
+  updateSortHeaders();
+  resortList();
+};
+
+function updateSortHeaders() {
+  document.querySelectorAll('#results-table th[data-col]').forEach(th => {
+    const arrow = th.querySelector('.sort-arrow');
+    if (th.dataset.col === S.currentSort.col) {
+      arrow.textContent = S.currentSort.dir === 'asc' ? '▲' : '▼';
+    } else {
+      arrow.textContent = '';
+    }
+  });
+}
+
+function resortList() {
+  const tbody = document.getElementById('results-tbody');
+  if (!tbody) return;
+  const rows = [...tbody.querySelectorAll('tr[data-fid]')];
+  const { col, dir } = S.currentSort;
+  rows.sort((a, b) => {
+    let av = parseFloat(col === 'emv' ? a.dataset.emv : a.dataset.dist);
+    let bv = parseFloat(col === 'emv' ? b.dataset.emv : b.dataset.dist);
+    if (isNaN(av)) av = dir === 'asc' ? Infinity : -Infinity;
+    if (isNaN(bv)) bv = dir === 'asc' ? Infinity : -Infinity;
+    return dir === 'asc' ? av - bv : bv - av;
+  });
+  rows.forEach(r => tbody.appendChild(r));
 }
 
 // ── Export CSV ────────────────────────────────────────────────────────────────
@@ -1333,7 +1391,7 @@ function hideProgressBar() {
 function clearResults() {
   clusterGroup.clearLayers();
   hiddenGroup.clearLayers();
-  document.getElementById('results-list').innerHTML = '';
+  document.getElementById('results-tbody').innerHTML = '';
   document.getElementById('assessor-status').textContent = '';
   S.parcels        = [];
   S.featureMap     = new Map();
