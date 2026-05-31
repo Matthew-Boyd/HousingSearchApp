@@ -23,9 +23,15 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 #left-panel.collapsed{width:0;min-width:0}
 
 #filter-section{
-  height:48%;flex-shrink:0;overflow-y:auto;
-  padding:10px 12px;border-bottom:2px solid #ccc;
+  height:45%;flex-shrink:0;overflow-y:auto;
+  padding:10px 12px;
 }
+#panel-resizer{
+  height:7px;background:#ddd;cursor:row-resize;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;user-select:none;
+}
+#panel-resizer:hover,#panel-resizer.dragging{background:#b0c4de}
+#panel-resizer::after{content:'· · ·';color:#999;font-size:10px;letter-spacing:3px;line-height:1}
 #results-section{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
 #results-header{padding:7px 10px;background:#f0f0f0;border-bottom:1px solid #ccc;flex-shrink:0}
 #results-list{flex:1;overflow-y:auto}
@@ -69,10 +75,19 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 .search-btn{
   width:100%;padding:7px;background:#185FA5;color:#fff;
   border:none;border-radius:4px;font-size:14px;font-weight:600;
-  cursor:pointer;margin-top:4px;
+  cursor:pointer;margin-bottom:8px;
 }
 .search-btn:hover{background:#0d3a6e}
 .search-btn:disabled{background:#999;cursor:not-allowed}
+.search-btn.cancelling{background:#b91c1c}
+.search-btn.cancelling:hover{background:#991b1b}
+#layer-toggle{
+  position:absolute;top:10px;right:10px;z-index:1000;
+  padding:4px 10px;background:#fff;border:2px solid rgba(0,0,0,.3);
+  border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;
+  box-shadow:0 1px 5px rgba(0,0,0,.35);
+}
+#layer-toggle:hover{background:#f0f0f0}
 .tooltip-icon{
   display:inline-block;width:14px;height:14px;background:#aaa;color:#fff;
   border-radius:50%;text-align:center;line-height:14px;font-size:10px;
@@ -123,7 +138,7 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 .popup-val.highlight{color:#185FA5;font-weight:700;font-size:13px}
 .popup-pair{display:flex;gap:12px;font-size:11px;color:#555}
 .popup-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;padding-top:6px;border-top:1px solid #eee}
-.popup-zillow{font-size:11px;color:#185FA5;text-decoration:none}
+.popup-zillow{font-size:11px;color:#185FA5;background:none;border:none;padding:0;cursor:pointer;text-decoration:none}
 .popup-zillow:hover{text-decoration:underline}
 .popup-hide-btn{
   font-size:11px;padding:2px 8px;background:#e5e7eb;border:1px solid #ccc;
@@ -158,6 +173,7 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
     <!-- Filter section -->
     <div id="filter-section">
       <div class="panel-title">Wisconsin Parcel Search</div>
+      <button class="search-btn" id="searchBtn">Search</button>
 
       <!-- Value filters -->
       <div class="filter-group">
@@ -249,14 +265,15 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
       <!-- Hidden controls -->
       <div class="filter-group">
         <label class="checkbox-label" style="margin-bottom:4px">
-          <input type="checkbox" id="showHidden">
+          <input type="checkbox" id="showHidden" checked>
           Show hidden properties
         </label>
         <button class="link-btn" id="clearHiddenBtn">Clear all hidden (<span id="hiddenCount">0</span>)</button>
       </div>
 
-      <button class="search-btn" id="searchBtn">Search</button>
     </div>
+
+    <div id="panel-resizer"></div>
 
     <!-- Results section -->
     <div id="results-section">
@@ -276,6 +293,7 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
   <!-- ── Map side ──────────────────────────────────────────────────────────── -->
   <div id="map-container">
     <button id="panel-toggle">◀</button>
+    <button id="layer-toggle">Satellite</button>
     <div id="map"></div>
     <div id="progress-bar"></div>
   </div>
@@ -292,7 +310,7 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 const TARGET_COUNTIES = ['DANE','JEFFERSON','WAUKESHA','GREEN','ROCK','WALWORTH','COLUMBIA','DODGE','WASHINGTON'];
 const CLASS_COLORS = {'1':'#185FA5','2':'#3B6D11','4':'#BA7517','5':'#993C1D'};
 const DEFAULT_COLOR = '#5F5E5A';
-const HIDDEN_COLOR  = '#9ca3af';
+const HIDDEN_COLOR  = '#7c3aed';
 // V11 field names (all uppercase). GISACRES is null for some counties; WHERE clause uses COALESCE.
 const OUT_FIELDS = [
   'PARCELID','OWNERNME1','OWNERNME2','PSTLADRESS','SITEADRESS',
@@ -331,10 +349,17 @@ const map = L.map('map', {
   zoom: 8,
   preferCanvas: true,
 });
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+
+const cartoLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
   attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
   subdomains: 'abcd', maxZoom: 19,
-}).addTo(map);
+});
+const esriSatellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  attribution: 'Tiles &copy; Esri &mdash; Source: Esri, USGS, etc.',
+  maxZoom: 19,
+});
+cartoLight.addTo(map);
+let isSatellite = false;
 
 const renderer = L.canvas({ padding: 0.5 });
 
@@ -354,6 +379,7 @@ const clusterGroup = L.markerClusterGroup({
 });
 const hiddenGroup = L.layerGroup();
 map.addLayer(clusterGroup);
+map.addLayer(hiddenGroup);
 
 // ── Initialization ─────────────────────────────────────────────────────────────
 async function initApp() {
@@ -416,6 +442,54 @@ function setupEventListeners() {
     btn.textContent = panel.classList.contains('collapsed') ? '▶' : '◀';
     setTimeout(() => map.invalidateSize(), 160);
   });
+
+  document.getElementById('layer-toggle').addEventListener('click', toggleLayer);
+  setupResizer();
+}
+
+function toggleLayer() {
+  isSatellite = !isSatellite;
+  if (isSatellite) {
+    map.removeLayer(cartoLight);
+    esriSatellite.addTo(map);
+    document.getElementById('layer-toggle').textContent = 'Map';
+  } else {
+    map.removeLayer(esriSatellite);
+    cartoLight.addTo(map);
+    document.getElementById('layer-toggle').textContent = 'Satellite';
+  }
+}
+
+function setupResizer() {
+  const resizer   = document.getElementById('panel-resizer');
+  const filterSec = document.getElementById('filter-section');
+  const panel     = document.getElementById('left-panel');
+  let startY, startH;
+
+  resizer.addEventListener('mousedown', e => {
+    startY = e.clientY;
+    startH = filterSec.getBoundingClientRect().height;
+    resizer.classList.add('dragging');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    e.preventDefault();
+  });
+
+  function onMove(e) {
+    const panelH = panel.getBoundingClientRect().height;
+    const newH   = Math.max(60, Math.min(panelH - 80, startH + (e.clientY - startY)));
+    filterSec.style.height = newH + 'px';
+  }
+
+  function onUp() {
+    resizer.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  }
 }
 
 // ── Assessment ratio helpers ───────────────────────────────────────────────────
@@ -456,12 +530,21 @@ function updateCeilingDisplay() {
 }
 
 // ── Search ─────────────────────────────────────────────────────────────────────
+let searchAbortCtrl = null;
+
 async function startSearch() {
-  if (S.isSearching) return;
+  const btn = document.getElementById('searchBtn');
+  if (S.isSearching) {
+    searchAbortCtrl?.abort();
+    return;
+  }
   S.isSearching = true;
+  searchAbortCtrl = new AbortController();
+  const signal = searchAbortCtrl.signal;
+
   clearResults();
-  document.getElementById('searchBtn').disabled = true;
-  document.getElementById('searchBtn').textContent = 'Searching…';
+  btn.textContent = 'Searching… press to cancel';
+  btn.classList.add('cancelling');
   document.getElementById('results-count').textContent = 'Fetching…';
   showProgressBar(0);
 
@@ -472,12 +555,25 @@ async function startSearch() {
       return;
     }
 
-    // Kick off count query in parallel with first data page
-    fetch(`/parcel-query?${new URLSearchParams({ where, returnCountOnly: 'true', f: 'json' })}`)
+    fetch(`/parcel-query?${new URLSearchParams({ where, returnCountOnly: 'true', f: 'json' })}`, { signal })
       .then(r => r.json()).then(d => { S.totalCount = d.count; updateResultsCount(); })
       .catch(() => {});
 
-    await fetchAllPages(where);
+    await fetchAllPages(where, signal);
+
+    if (signal.aborted) {
+      if (S.parcels.length > 0) {
+        map.fitBounds(clusterGroup.getBounds().pad(0.05));
+        updateResultsCount();
+        document.getElementById('results-count').textContent =
+          `Cancelled — ${S.parcels.length.toLocaleString()} results loaded`;
+        const bbox = computeBbox();
+        runEnrichmentPasses(bbox);
+      } else {
+        document.getElementById('results-count').textContent = 'Search cancelled.';
+      }
+      return;
+    }
 
     if (S.parcels.length === 0) {
       document.getElementById('results-count').textContent = 'No results matched your filters.';
@@ -488,16 +584,20 @@ async function startSearch() {
     hideProgressBar();
     updateResultsCount();
 
-    // Three enrichment passes in parallel
     const bbox = computeBbox();
     runEnrichmentPasses(bbox);
 
   } catch (err) {
-    document.getElementById('results-count').textContent = `Error: ${err.message}`;
+    if (err.name === 'AbortError') {
+      // handled above via signal.aborted check
+    } else {
+      document.getElementById('results-count').textContent = `Error: ${err.message}`;
+    }
   } finally {
     S.isSearching = false;
-    document.getElementById('searchBtn').disabled = false;
-    document.getElementById('searchBtn').textContent = 'Search';
+    searchAbortCtrl = null;
+    btn.textContent = 'Search';
+    btn.classList.remove('cancelling');
   }
 }
 
@@ -531,7 +631,7 @@ function buildWhereClause() {
   return conds.join(' AND ');
 }
 
-async function fetchAllPages(where) {
+async function fetchAllPages(where, signal) {
   let offset = 0;
   const params = () => new URLSearchParams({
     where, outFields: OUT_FIELDS,
@@ -542,7 +642,7 @@ async function fetchAllPages(where) {
   });
 
   while (true) {
-    const res = await fetch(`/parcel-query?${params()}`);
+    const res  = await fetch(`/parcel-query?${params()}`, { signal });
     const data = await res.json();
     if (!data.features || data.features.length === 0) break;
     addParcels(data.features);
@@ -620,7 +720,7 @@ function buildHiddenMarker(feature) {
   const m = L.circleMarker([feature._centroid.lat, feature._centroid.lng], {
     renderer, radius: 5,
     fillColor: HIDDEN_COLOR, color: HIDDEN_COLOR,
-    weight: 1, opacity: 0.3, fillOpacity: 0.3,
+    weight: 1, opacity: 0.75, fillOpacity: 0.75,
   });
   m._fid = feature.properties.PARCELID;
   m.on('click', () => onMarkerClick(feature.properties.PARCELID));
@@ -629,7 +729,7 @@ function buildHiddenMarker(feature) {
 
 function buildListItem(feature) {
   const p   = feature.properties;
-  const fid = p.parcelfid;
+  const fid = p.PARCELID;
   const li  = document.createElement('div');
   li.className = 'list-item' + (S.hidden.has(fid) ? ' is-hidden' : '');
   li.dataset.fid = fid;
@@ -732,7 +832,7 @@ function buildPopupHTML(feature) {
       <div class="popup-row"><span class="popup-label">Wetlands</span><span class="popup-val">${wetlandsVal}</span></div>
     </div>
     <div class="popup-actions">
-      <a class="popup-zillow" href="https://www.zillow.com/homes/${zillowQ}_rb/" target="_blank" rel="noopener">Check Zillow ↗</a>
+      <button class="popup-zillow" onclick="event.stopPropagation();window.open('https://www.zillow.com/homes/${zillowQ}/', '_blank')">Check Zillow ↗</button>
       <button class="popup-hide-btn ${isHid ? 'unhide' : ''}" onclick="toggleHidden('${fid.replace(/'/g, "\\'")}')">${isHid ? 'Unhide' : 'Hide this property'}</button>
     </div>
   </div>`;
@@ -808,7 +908,7 @@ async function runFloodWetlandsPass(bbox) {
     S.waterFeatures = nwiFeatures; // reuse for water proximity filter
 
     for (const feature of S.parcels) {
-      const fid = feature.properties.parcelfid;
+      const fid = feature.properties.PARCELID;
       if (!feature._centroid) continue;
       const pt = turf.point([feature._centroid.lng, feature._centroid.lat]);
 
@@ -977,7 +1077,7 @@ function markWaterAdjacent() {
 // ── Client-side filtering ──────────────────────────────────────────────────────
 function passesClientFilters(feature) {
   const p   = feature.properties;
-  const fid = p.parcelfid;
+  const fid = p.PARCELID;
   const e   = S.enrichment.get(fid) || {};
 
   if (document.getElementById('absenteeOnly').checked && !isAbsentee(p)) return false;
@@ -996,7 +1096,7 @@ function passesClientFilters(feature) {
 
   const minBr = parseInt(document.getElementById('minBedrooms').value, 10);
   if (!isNaN(minBr) && minBr > 0) {
-    const county = (p.coname || '').toUpperCase();
+    const county = p.CONAME || '';
     if (S.assessorStatus[county] === 'done') {
       if (e.bedrooms != null && e.bedrooms < minBr) return false;
     }
@@ -1125,12 +1225,24 @@ function onShowHiddenToggle() {
 
 // ── Focus parcel (bidirectional link) ─────────────────────────────────────────
 function focusParcel(fid) {
-  const marker = S.allMarkers.get(fid);
-  if (!marker) return;
-  clusterGroup.zoomToShowLayer(marker, () => {
-    marker.fire('click');
-  });
   highlightListItem(fid);
+
+  const isHid    = S.hidden.has(fid);
+  const marker   = isHid ? S.hiddenMarkers.get(fid) : S.allMarkers.get(fid);
+  if (!marker) return;
+
+  const latlng    = marker.getLatLng();
+  const zoomLevel = Math.max(map.getZoom(), 14);
+
+  if (!isHid && S.inCluster.has(fid)) {
+    clusterGroup.zoomToShowLayer(marker, () => {
+      map.flyTo(latlng, zoomLevel);
+      setTimeout(() => marker.fire('click'), 500);
+    });
+  } else {
+    map.flyTo(latlng, zoomLevel);
+    setTimeout(() => marker.fire('click'), 500);
+  }
 }
 
 function highlightListItem(fid) {
