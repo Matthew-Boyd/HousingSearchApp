@@ -53,7 +53,7 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 /* ── Filter panel ────────────────────────────────────────────────────────── */
 .panel-title{font-size:14px;font-weight:700;margin-bottom:8px;color:#185FA5}
 .filter-group{margin-bottom:10px}
-.filter-group label:not(.checkbox-label){display:block;font-weight:600;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.03em;margin-bottom:3px}
+.filter-group label:not(.checkbox-label),.filter-group-label{display:block;font-weight:600;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.03em;margin-bottom:3px}
 .filter-group input[type=number],.filter-group select{
   border:1px solid #ccc;border-radius:3px;padding:3px 5px;
   font-size:13px;background:#fafafa;
@@ -131,7 +131,8 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 .col-emv-td{width:92px}
 .col-dist-td{width:96px}
 .list-addr{font-size:12px;font-weight:500;color:#222}
-.list-badges{display:flex;gap:3px;margin-top:2px;flex-wrap:wrap}
+.list-meta-row{display:flex;align-items:center;gap:4px;margin-top:2px;flex-wrap:wrap}
+.list-br{font-size:11px;color:#555}
 .list-fmv{font-size:12px;font-weight:700;color:#185FA5}
 .list-dist{font-size:12px;color:#555}
 .badge{font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px;text-transform:uppercase}
@@ -188,9 +189,9 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 
       <!-- Value filters -->
       <div class="filter-group">
-        <label>Purchase budget</label>
+        <label for="budget">Purchase budget</label>
         <div class="input-row"><span>$</span><input type="number" id="budget" value="900000" min="0" step="10000"></div>
-        <label style="margin-top:5px">
+        <label for="ratio" style="margin-top:5px">
           Assessment ratio
           <span class="tooltip-icon" title="Pre-filled from Wisconsin DOR data. Each parcel's displayed estimated market value uses its municipality-specific ratio. The filter ceiling = budget × ratio ÷ 100.">?</span>
         </label>
@@ -199,13 +200,13 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
           <span>%</span>
         </div>
         <div class="derived" id="ceiling-display">Filter ceiling: $855,000</div>
-        <label style="margin-top:5px">Min FMV (optional)</label>
+        <label for="minFmv" style="margin-top:5px">Min FMV (optional)</label>
         <div class="input-row"><span>$</span><input type="number" id="minFmv" placeholder="none" min="0"></div>
       </div>
 
       <!-- Acreage -->
       <div class="filter-group">
-        <label>GIS Acres</label>
+        <label for="minAcres">GIS Acres</label>
         <div class="input-row">
           <input type="number" id="minAcres" value="4" min="0" step="0.5" style="width:70px">
           <span>to</span>
@@ -223,7 +224,7 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 
       <!-- Property class -->
       <div class="filter-group">
-        <label>Property Class</label>
+        <span class="filter-group-label">Property Class</span>
         <label class="checkbox-label"><input type="checkbox" id="class1" checked> Class 1 – Residential</label>
         <label class="checkbox-label agri-label">
           <span style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="class4"> Class 4 – Agricultural</span>
@@ -234,7 +235,7 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
       <!-- Counties -->
       <div class="filter-group">
         <div class="fg-header">
-          <label>Counties</label>
+          <span class="filter-group-label">Counties</span>
           <button class="link-btn" id="countyToggleBtn">Uncheck all</button>
         </div>
         <div class="county-grid" id="county-grid"></div>
@@ -258,7 +259,7 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 
       <!-- Min distance -->
       <div class="filter-group">
-        <label>Min distance to nearest house</label>
+        <label for="minDist">Min distance to nearest house</label>
         <div class="input-row">
           <input type="number" id="minDist" placeholder="none" min="0" style="width:80px">
           <select id="distUnit"><option value="ft">ft</option><option value="mi">mi</option></select>
@@ -268,7 +269,7 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 
       <!-- Bedrooms -->
       <div class="filter-group">
-        <label>Min bedrooms</label>
+        <label for="minBedrooms">Min bedrooms</label>
         <input type="number" id="minBedrooms" value="3" min="1" style="width:60px">
         <div style="font-size:10px;color:#999;margin-top:2px" id="bedroomsNote">Applied after county assessor data loads</div>
       </div>
@@ -657,8 +658,7 @@ async function fetchAllPages(where, signal) {
     where, outFields: OUT_FIELDS,
     returnGeometry: 'true', outSR: '4326', f: 'geojson',
     resultRecordCount: '2000',
-    resultOffset: String(offset),
-    orderByFields: 'estfmkvalue ASC'
+    resultOffset: String(offset)
   });
 
   while (true) {
@@ -770,12 +770,14 @@ function listItemHTML(feature) {
   const ab  = isAbsentee(p);
   const distText = e.nearestDistanceFt != null ? `${e.nearestDistanceFt.toLocaleString()} ft` : '—';
   const distId   = !S.neighborDone && e.nearestDistanceFt == null ? ` id="li-dist-${CSS.escape(fid)}"` : '';
+  const brSpan   = e.bedrooms != null ? `<span class="list-br">${e.bedrooms} bd</span>` : '';
   const badges   = (ab ? '<span class="badge badge-absentee">ABSENTEE</span>' : '')
                  + (S.hidden.has(fid) ? '<span class="badge badge-hidden">HIDDEN</span>' : '');
+  const metaRow  = brSpan + badges;
   return `
     <td class="col-addr">
       <div class="list-addr">${esc(getAddress(p))}</div>
-      ${badges ? `<div class="list-badges">${badges}</div>` : ''}
+      ${metaRow ? `<div class="list-meta-row">${metaRow}</div>` : ''}
     </td>
     <td class="col-emv-td"><span class="list-fmv">~${fmtMoney(emv)}</span></td>
     <td class="col-dist-td list-dist"${distId}>${distText}</td>`;

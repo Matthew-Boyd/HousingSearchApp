@@ -14,6 +14,10 @@ const PORT = 3000;
 
 const HIDDEN_FILE    = path.join(__dirname, 'hidden.json');
 const BUILDINGS_FILE = path.join(__dirname, 'buildings.geojson');
+const ASSESSOR_CACHE_FILE = path.join(__dirname, 'assessor-cache.json');
+
+// In-memory assessor cache. Key: PARCELID. Value: { bedrooms, sqft, yearBuilt, cachedAt }
+const assessorCache = new Map();
 
 // Spatial grid cell size (degrees). 0.05° ≈ 3.5 km lat / 4.3 km lng at 43°N.
 const CELL = 0.05;
@@ -24,6 +28,9 @@ const BLDG_BBOX = { minLat: 42.2, maxLat: 44.0, minLng: -90.3, maxLng: -87.9 };
 // Grid populated at startup from buildings.geojson.
 // Key: "rowIndex|colIndex"  Value: [{lat, lng}, …]
 const buildingGrid = new Map();
+
+// Browser-like User-Agent for county assessor scraping.
+const SCRAPER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 const SCO_URL           = 'https://services3.arcgis.com/n6uYoouQZW75n5WI/arcgis/rest/services/Wisconsin_Statewide_Parcels/FeatureServer/0/query';
 const FEMA_URL          = 'https://services.arcgis.com/2gdL2gxYNFY2TOUb/arcgis/rest/services/FEMA_National_Flood_Hazard_Layer/FeatureServer/0/query';
@@ -125,6 +132,33 @@ function initHiddenFile() {
 
 function saveHidden() {
   fs.writeFileSync(HIDDEN_FILE, JSON.stringify([...hiddenSet], null, 2), 'utf8');
+}
+
+// ─── Assessor cache ───────────────────────────────────────────────────────────
+function loadAssessorCache() {
+  try {
+    if (!fs.existsSync(ASSESSOR_CACHE_FILE)) return;
+    const obj = JSON.parse(fs.readFileSync(ASSESSOR_CACHE_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(obj)) assessorCache.set(k, v);
+    console.log(`[assessor] Cache loaded: ${assessorCache.size} parcels`);
+  } catch (err) {
+    console.warn(`[assessor] Cache load failed: ${err.message}`);
+  }
+}
+
+let cacheSaveTimer = null;
+function scheduleAssessorCacheSave() {
+  // Debounce: write at most once per 5 s to avoid hammering disk during a bulk scrape.
+  if (cacheSaveTimer) return;
+  cacheSaveTimer = setTimeout(() => {
+    cacheSaveTimer = null;
+    try {
+      const obj = Object.fromEntries(assessorCache);
+      fs.writeFileSync(ASSESSOR_CACHE_FILE, JSON.stringify(obj, null, 2), 'utf8');
+    } catch (err) {
+      console.warn(`[assessor] Cache save failed: ${err.message}`);
+    }
+  }, 5000);
 }
 
 // ─── express middleware ───────────────────────────────────────────────────────
@@ -308,7 +342,7 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
 //   { county: "DANE", parcels: [{parcelfid, siteadress, cityname}, …] }
 // Returns:
 //   { results: [{parcelfid, bedrooms, sqft, yearBuilt}, …], error?: string }
-// Fields default to null when the scraper cannot find a value.
+// Cache hit: returns immediately without hitting the county website.
 app.post('/assessor-query', async (req, res) => {
   const { county, parcels } = req.body;
   if (!county || !Array.isArray(parcels) || parcels.length === 0) {
@@ -316,71 +350,152 @@ app.post('/assessor-query', async (req, res) => {
   }
 
   const scraper = COUNTY_SCRAPERS[county.toUpperCase()];
-  if (!scraper) {
+  if (scraper === undefined) {
     return res.json({ results: [], error: `No scraper for county: ${county}` });
+  }
+  if (scraper === null) {
+    // Scraper not yet implemented — signal stub so the UI shows "—" not "✗".
+    return res.json({ results: null, error: 'stub' });
   }
 
   const results = [];
+  let cacheWrites = 0;
+
   for (const parcel of parcels) {
+    const cached = assessorCache.get(parcel.parcelfid);
+    if (cached) {
+      results.push({ parcelfid: parcel.parcelfid, ...cached });
+      continue;
+    }
     try {
       const data = await scraper(parcel);
-      results.push({ parcelfid: parcel.parcelfid, ...data });
+      const entry = {
+        bedrooms: data.bedrooms ?? null,
+        sqft: data.sqft ?? null,
+        yearBuilt: data.yearBuilt ?? null,
+        cachedAt: Date.now(),
+      };
+      assessorCache.set(parcel.parcelfid, entry);
+      cacheWrites++;
+      results.push({ parcelfid: parcel.parcelfid, ...entry });
     } catch {
       results.push({ parcelfid: parcel.parcelfid, bedrooms: null, sqft: null, yearBuilt: null });
     }
   }
+
+  if (cacheWrites > 0) scheduleAssessorCacheSave();
   res.json({ results });
 });
 
 // ─── County scrapers ──────────────────────────────────────────────────────────
 // Each scraper: async (parcel) => { bedrooms, sqft, yearBuilt }
-// Use null for any field the source doesn't provide.
-// Throw to indicate a lookup failure (parcel will show null fields in UI).
+// parcel fields available: { parcelfid, siteadress, cityname }
+// Return null for any field not found. Throw to signal a lookup failure.
+// null entry in COUNTY_SCRAPERS = known stub (signals 'stub' to UI without burning HTTP).
 
-async function scrapeNotImplemented() {
-  throw new Error('Scraper not yet implemented');
-}
-
-// Generic Beacon (Schneider Geospatial) scraper. Pass the county-specific AppID.
-// Find the AppID by visiting https://beacon.schneidercorp.com and navigating to
-// a Wisconsin county — it appears in the URL as ?AppID=XXX.
-async function scrapeBeacon(appId, parcel) {
-  const url = `https://beacon.schneidercorp.com/Application.aspx`
-    + `?AppID=${appId}&LayerID=0&PageTypeID=4`
-    + `&KeyValue=${encodeURIComponent(parcel.parcelfid)}`;
-
-  const html = await fetchHTML(url);
-  const $    = cheerio.load(html);
-
+// Generic table/dl parser — extracts bedrooms, sqft, yearBuilt from labeled HTML rows.
+// Works for most county portals that render building data in <table> or <dl> structures.
+function parseLabelValueTable($) {
   let bedrooms = null, sqft = null, yearBuilt = null;
-
-  $('table tr').each((_, row) => {
+  const trySet = (rawLabel, rawVal) => {
+    const l = rawLabel.toUpperCase().replace(/[^A-Z0-9 ]/g, ' ');
+    const n = parseInt(rawVal.replace(/[^0-9]/g, ''), 10);
+    if (/BEDROOM|BDRM/.test(l) && !isNaN(n) && n < 30)                                               bedrooms  = n;
+    if (/SQ ?FT|SQUARE FEET|TOTAL.{1,10}AREA|LIVING.{1,10}AREA|FLOOR.{1,5}AREA/.test(l) && !isNaN(n) && n > 100) sqft = n;
+    if (/YEAR.{1,5}BUILT|YR.{1,5}BUILT|^BUILT$/.test(l) && !isNaN(n) && n > 1800 && n < 2100)        yearBuilt = n;
+  };
+  $('tr').each((_, row) => {
     const cells = $(row).find('td');
     if (cells.length < 2) return;
-    const label = $(cells[0]).text().trim().toUpperCase();
-    const raw   = $(cells[1]).text().trim();
-    const num   = parseInt(raw.replace(/,/g, ''), 10);
-    if (/BEDROOM/.test(label))                                      bedrooms  = isNaN(num) ? null : num;
-    if (/TOTAL.*AREA|GROSS.*AREA|LIVING.*AREA|SQ.*FT/.test(label)) sqft      = isNaN(num) ? null : num;
-    if (/YEAR.*BUILT|^BUILT$/.test(label))                          yearBuilt = isNaN(num) ? null : num;
+    trySet($(cells[0]).text().trim(), $(cells[cells.length - 1]).text().trim());
+    if (cells.length >= 4) trySet($(cells[2]).text().trim(), $(cells[3]).text().trim());
   });
-
+  $('dt').each((_, dt) => trySet($(dt).text().trim(), $(dt).next('dd').text().trim()));
   return { bedrooms, sqft, yearBuilt };
 }
 
-// TODO: Look up each county's CAMA web interface before implementing.
-// For Beacon counties: find the AppID by browsing https://beacon.schneidercorp.com
-// and clicking through to a Wisconsin county property detail page.
+// ── Dane County ───────────────────────────────────────────────────────────────
+// System: Access Dane  https://accessdane.danecounty.gov
+// SCO PARCELID: "MUN/XXXX-XXX-XXXX-X"  →  strip "MUN/" prefix, remove dashes → 12-digit PIN
+// Building characteristics appear in the Assessment Detail section of the parcel page.
+async function scrapeDane(parcel) {
+  const raw = String(parcel.parcelfid || '');
+  const sep = raw.indexOf('/');
+  if (sep < 0) throw new Error(`Unexpected Dane PARCELID format: ${raw}`);
+  const pin  = raw.slice(sep + 1).replace(/-/g, '');
+  const html = await fetchHTML(`https://accessdane.danecounty.gov/Parcel/Index/${pin}`);
+  if (/matching parcel could not be found/i.test(html)) throw new Error(`Parcel not found in Access Dane: ${pin}`);
+  return parseLabelValueTable(cheerio.load(html));
+}
+
+// ── Jefferson County ──────────────────────────────────────────────────────────
+// System: JCLRS  https://apps.jeffersoncountywi.gov/jc/jclrs
+// SCO PARCELID: "XXX-XXXX-XXXX-XXX" — used directly in URL path.
+// The public JCLRS summary report exposes assessment/tax data; CAMA building
+// characteristics (bedrooms, sqft) are not exposed in this view. Results will
+// cache as null until Jefferson County adds a building-data endpoint.
+async function scrapeJefferson(parcel) {
+  const html = await fetchHTML(
+    `https://apps.jeffersoncountywi.gov/jc/JCLRS/parcel_summary_report/${encodeURIComponent(parcel.parcelfid)}`
+  );
+  return parseLabelValueTable(cheerio.load(html));
+}
+
+// ── Rock County ───────────────────────────────────────────────────────────────
+// System: taxsearch.co.rock.wi.us (PHP)
+// SCO PARCELID: "XXX XXXXXX" (alpha-prefix + space + numeric, e.g. "Z002 020007")
+// Space encodes as + in the taxid query param (PHP convention).
+async function scrapeRock(parcel) {
+  const taxid = (parcel.parcelfid || '').replace(/ /g, '+');
+  try {
+    const html = await fetchHTML(`https://taxsearch.co.rock.wi.us/parceldetails.php?taxid=${taxid}`);
+    return parseLabelValueTable(cheerio.load(html));
+  } catch {
+    // Fallback to legacy URL path in case subdomain is unavailable.
+    const html = await fetchHTML(`http://www.co.rock.wi.us/Rock/TaxSearch/parceldetails.php?taxid=${taxid}`);
+    return parseLabelValueTable(cheerio.load(html));
+  }
+}
+
+// ── Dodge County ─────────────────────────────────────────────────────────────
+// System: LIST (GCSWebPortal)  https://list.co.dodge.wi.us/GCSWebPortal
+// SCO PARCELID: "XXX-XXXX-XXXX-XXX" — strip dashes for ParcelNumber param.
+// ASP.NET session: a prior GET to the search page is needed to obtain a session
+// cookie, otherwise the parcel-number query triggers an infinite redirect loop.
+async function scrapeDodge(parcel) {
+  const parcelNo = (parcel.parcelfid || '').replace(/-/g, '');
+  const baseUrl  = 'https://list.co.dodge.wi.us/GCSWebPortal/Search.aspx';
+  const cookie   = await fetchSessionCookie(baseUrl);
+  const html = await fetchHTML(
+    `${baseUrl}?ParcelNumber=${encodeURIComponent(parcelNo)}`,
+    { headers: cookie ? { Cookie: cookie } : {} }
+  );
+  return parseLabelValueTable(cheerio.load(html));
+}
+
 const COUNTY_SCRAPERS = {
-  DANE:       scrapeNotImplemented,  // TODO: check assessor.countyofdane.com or Beacon
-  JEFFERSON:  scrapeNotImplemented,  // TODO: check Jefferson County property search
-  WAUKESHA:   scrapeNotImplemented,  // TODO: check waukeshacounty.gov property search
-  GREEN:      scrapeNotImplemented,  // TODO: may be manual-only (no public web CAMA found)
-  ROCK:       scrapeNotImplemented,  // TODO: check Rock County property search
-  WALWORTH:   scrapeNotImplemented,  // TODO: check Walworth County assessor portal
-  COLUMBIA:   scrapeNotImplemented,  // TODO: check Columbia County property search
-  DODGE:      (p) => scrapeBeacon('TODO_DODGE_APPID', p),  // Beacon platform confirmed; replace AppID
-  WASHINGTON: scrapeNotImplemented,  // TODO: check Washington County property search
+  DANE:       scrapeDane,
+  JEFFERSON:  scrapeJefferson,
+  ROCK:       scrapeRock,
+  DODGE:      scrapeDodge,
+  // ── Stubs: null = known unimplemented, returns 'stub' status to UI ──────────
+  // WAUKESHA: tax.waukeshacounty.gov — session-based search, no direct deep-link.
+  //   Building data is held per-municipality. Requires POST form with session state.
+  WAUKESHA:   null,
+  // GREEN/COLUMBIA/WALWORTH/WASHINGTON: Ascent Land Records Suite (Transcendent Technologies).
+  //   Angular SPA — REST API endpoints could not be determined without running the app
+  //   in a browser and capturing XHR traffic via DevTools. To implement:
+  //   1. Open the county's Ascent portal in Chrome DevTools → Network → XHR/Fetch
+  //   2. Search for a known parcel and record the API request URL + response shape
+  //   3. Implement a scraper using those endpoints
+  //   Green:      https://ascent.greencountywi.org/LandRecords/PropertyListing/RealEstateTaxParcel
+  //   Columbia:   http://ascent.co.columbia.wi.us/LandRecords/PropertyListing/RealEstateTaxParcel
+  //   Walworth:   https://ascent.co.walworth.wi.us/LandRecords/PropertyListing/RealEstateTaxParcel
+  //   Washington: https://landrecords.washcowisco.gov/LandRecords/PropertyListing/RealEstateTaxParcel
+  GREEN:      null,
+  WALWORTH:   null,
+  COLUMBIA:   null,
+  WASHINGTON: null,
 };
 
 // ─── GET /water-query ────────────────────────────────────────────────────────
@@ -452,7 +567,7 @@ app.delete('/hidden', (req, res) => {
 
 // ─── fetch helpers ────────────────────────────────────────────────────────────
 async function fetchJSON(url) {
-  const res = await fetch(url, { timeout: 30000 });
+  const res = await fetch(url, { timeout: 90000 });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`Upstream HTTP ${res.status}: ${body.slice(0, 300)}`);
@@ -461,18 +576,36 @@ async function fetchJSON(url) {
 }
 
 
-async function fetchHTML(url) {
+async function fetchHTML(url, { headers = {}, ...opts } = {}) {
   const res = await fetch(url, {
-    timeout: 10000,
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; WI-Parcel-Tool/1.0)' }
+    timeout: 15000,
+    ...opts,
+    headers: { 'User-Agent': SCRAPER_UA, ...headers },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${url}`);
   return res.text();
 }
 
+// Fetches a page with redirect:manual to harvest session cookies without following
+// the redirect chain — used by ASP.NET county portals (e.g. Dodge LIST) that
+// require an established session before they will serve parcel detail queries.
+async function fetchSessionCookie(url) {
+  try {
+    const res = await fetch(url, {
+      timeout: 10000, redirect: 'manual',
+      headers: { 'User-Agent': SCRAPER_UA },
+    });
+    const raw = res.headers.raw()['set-cookie'] || [];
+    return raw.map(c => c.split(';')[0].trim()).filter(Boolean).join('; ');
+  } catch {
+    return '';
+  }
+}
+
 // ─── startup ──────────────────────────────────────────────────────────────────
 async function start() {
   initHiddenFile();
+  loadAssessorCache();
   await Promise.all([loadDorRatios(), loadBuildingFootprints()]);
   app.listen(PORT, () => {
     console.log(`Wisconsin Parcel Search → http://localhost:${PORT}`);

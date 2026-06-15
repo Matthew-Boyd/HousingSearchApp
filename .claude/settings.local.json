@@ -12,7 +12,23 @@
       "WebFetch(domain:gisdata-jeffcowa.opendata.arcgis.com)",
       "WebFetch(domain:gis.waukeshacounty.gov)",
       "WebFetch(domain:www.cityofmadison.com)",
-      "Bash(node --check server.js)"
+      "Bash(node --check server.js)",
+      "WebFetch(domain:ascent.greencountywi.org)",
+      "WebFetch(domain:accessdane.danecounty.gov)",
+      "WebFetch(domain:www.co.rock.wi.us)",
+      "WebFetch(domain:list.co.dodge.wi.us)",
+      "WebFetch(domain:apps.jeffersoncountywi.gov)",
+      "WebFetch(domain:tax.waukeshacounty.gov)",
+      "WebFetch(domain:landrecords.washcowisco.gov)",
+      "WebFetch(domain:ascent.co.columbia.wi.us)",
+      "WebFetch(domain:gisinfo.co.walworth.wi.us)",
+      "WebFetch(domain:beacon.schneidercorp.com)",
+      "WebFetch(domain:taxsearch.co.rock.wi.us)",
+      "WebFetch(domain:data-danecounty.opendata.arcgis.com)",
+      "Bash(curl *)",
+      "Bash(git -C \"C:/Users/mrmat/Documents/HousingSearchApp\" diff HEAD index.html)",
+      "Bash(netstat -ano)",
+      "Bash(tasklist)"
     ]
   }
 }
