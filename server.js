@@ -348,6 +348,7 @@ app.post('/assessor-query', async (req, res) => {
   if (!county || !Array.isArray(parcels) || parcels.length === 0) {
     return res.json({ results: [] });
   }
+  console.log(`[assessor:${county}] ${parcels.length} parcels requested`);
 
   const scraper = COUNTY_SCRAPERS[county.toUpperCase()];
   if (scraper === undefined) {
@@ -358,14 +359,14 @@ app.post('/assessor-query', async (req, res) => {
     return res.json({ results: null, error: 'stub' });
   }
 
-  const results = [];
   let cacheWrites = 0;
+  const results = new Array(parcels.length);
 
-  for (const parcel of parcels) {
+  const tasks = parcels.map((parcel, idx) => async () => {
     const cached = assessorCache.get(parcel.parcelfid);
     if (cached) {
-      results.push({ parcelfid: parcel.parcelfid, ...cached });
-      continue;
+      results[idx] = { parcelfid: parcel.parcelfid, ...cached };
+      return;
     }
     try {
       const data = await scraper(parcel);
@@ -377,12 +378,14 @@ app.post('/assessor-query', async (req, res) => {
       };
       assessorCache.set(parcel.parcelfid, entry);
       cacheWrites++;
-      results.push({ parcelfid: parcel.parcelfid, ...entry });
-    } catch {
-      results.push({ parcelfid: parcel.parcelfid, bedrooms: null, sqft: null, yearBuilt: null });
+      results[idx] = { parcelfid: parcel.parcelfid, ...entry };
+    } catch (err) {
+      console.warn(`[assessor:${county}] ${parcel.parcelfid}: ${err.message}`);
+      results[idx] = { parcelfid: parcel.parcelfid, bedrooms: null, sqft: null, yearBuilt: null };
     }
-  }
+  });
 
+  await runConcurrently(tasks, 5);
   if (cacheWrites > 0) scheduleAssessorCacheSave();
   res.json({ results });
 });
@@ -415,17 +418,84 @@ function parseLabelValueTable($) {
 }
 
 // ── Dane County ───────────────────────────────────────────────────────────────
-// System: Access Dane  https://accessdane.danecounty.gov
-// SCO PARCELID: "MUN/XXXX-XXX-XXXX-X"  →  strip "MUN/" prefix, remove dashes → 12-digit PIN
-// Building characteristics appear in the Assessment Detail section of the parcel page.
+// Access Dane is a tax-only portal — no building characteristics.
+// Building data comes from two public APIs, depending on municipality:
+//
+//   AccurateAssessor (Prolorem Dataverse): towns Albion, Berry, Blooming Grove, Cottage Grove,
+//     Cross Plains, Deerfield, Medina, Oregon, Perry, Pleasant Springs, Primrose, + villages.
+//     Has bedrooms, sqft, year built.
+//
+//   City of Madison ArcGIS MapServer: City of Madison only.
+//     Has bedrooms, sqft, year built.
+//
+//   Other municipalities (York, Springdale, Bristol, Westport, …): no source available yet.
+//
 async function scrapeDane(parcel) {
   const raw = String(parcel.parcelfid || '');
-  const sep = raw.indexOf('/');
-  if (sep < 0) throw new Error(`Unexpected Dane PARCELID format: ${raw}`);
-  const pin  = raw.slice(sep + 1).replace(/-/g, '');
-  const html = await fetchHTML(`https://accessdane.danecounty.gov/Parcel/Index/${pin}`);
-  if (/matching parcel could not be found/i.test(html)) throw new Error(`Parcel not found in Access Dane: ${pin}`);
-  return parseLabelValueTable(cheerio.load(html));
+  const pin = raw.replace(/^[A-Z]+\//, '').replace(/-/g, '');
+  if (!/^\d{12}$/.test(pin)) throw new Error(`Unexpected Dane PARCELID format: ${raw}`);
+
+  // 1. AccurateAssessor (Prolorem) Dataverse API — public, no auth needed.
+  //    Parcel records have format "MMM/XXXXXXXXXXXX"; contains() on the 12-digit portion
+  //    matches only parcels in AccurateAssessor-covered municipalities.
+  try {
+    const filter = `statecode eq 0 and contains(acc_parcelumber,'${pin}')`;
+    const expand = `acc_acc_realestate_acc_dwelling_RealEstate($select=acc_bedroomcount,acc_totallivingarea,acc_yearbuilt)`;
+    const select = `acc_dwellingtotallivingarea,acc_dwellingrecordcount`;
+    const url = `https://accurateassessor.powerappsportals.com/_api/acc_realestates`
+      + `?$filter=${encodeURIComponent(filter)}`
+      + `&$expand=${encodeURIComponent(expand)}`
+      + `&$select=${encodeURIComponent(select)}`
+      + `&$top=1`;
+    const text = await fetchHTML(url, {
+      headers: { 'OData-MaxVersion': '4.0', 'OData-Version': '4.0', 'Accept': 'application/json' },
+    });
+    const data = JSON.parse(text);
+    const recs = data.value || [];
+    if (recs.length) {
+      const rec = recs[0];
+      const dwellings = rec['acc_acc_realestate_acc_dwelling_RealEstate'] || [];
+      let bedrooms = null, sqft = null, yearBuilt = null;
+      for (const d of dwellings) {
+        if (d.acc_bedroomcount != null) bedrooms = d.acc_bedroomcount;
+        if (d.acc_totallivingarea != null) sqft = d.acc_totallivingarea;
+        if (d.acc_yearbuilt) yearBuilt = parseInt(d.acc_yearbuilt.slice(0, 4), 10);
+      }
+      if (sqft == null && rec.acc_dwellingtotallivingarea != null) sqft = rec.acc_dwellingtotallivingarea;
+      if (bedrooms != null || sqft != null) {
+        console.log(`[assessor:DANE/AA] ${pin} → beds=${bedrooms} sqft=${sqft} yr=${yearBuilt}`);
+        return { bedrooms, sqft, yearBuilt };
+      }
+    }
+  } catch (err) {
+    console.warn(`[assessor:DANE/AA] ${pin}: ${err.message}`);
+  }
+
+  // 2. City of Madison ArcGIS MapServer — public, no auth needed.
+  //    Parcel field is a 12-char string matching the SCO PARCELID directly.
+  try {
+    const url = `https://maps.cityofmadison.com/arcgis/rest/services/Public/Property_Lookup/MapServer/9/query`
+      + `?where=${encodeURIComponent(`Parcel='${pin}'`)}`
+      + `&outFields=Bedrooms,TotalLivingArea,YearBuilt&returnGeometry=false&f=json`;
+    const text = await fetchHTML(url);
+    const data = JSON.parse(text);
+    const features = data.features || [];
+    if (features.length) {
+      const a = features[0].attributes;
+      const bedrooms  = a.Bedrooms       ?? null;
+      const sqft      = a.TotalLivingArea ?? null;
+      const yearBuilt = a.YearBuilt       ?? null;
+      if (bedrooms != null || sqft != null) {
+        console.log(`[assessor:DANE/Madison] ${pin} → beds=${bedrooms} sqft=${sqft} yr=${yearBuilt}`);
+        return { bedrooms, sqft, yearBuilt };
+      }
+    }
+  } catch (err) {
+    console.warn(`[assessor:DANE/Madison] ${pin}: ${err.message}`);
+  }
+
+  // Municipalities not covered by either source (York, Springdale, Bristol, Westport, …).
+  return { bedrooms: null, sqft: null, yearBuilt: null };
 }
 
 // ── Jefferson County ──────────────────────────────────────────────────────────
@@ -600,6 +670,16 @@ async function fetchSessionCookie(url) {
   } catch {
     return '';
   }
+}
+
+// Runs an array of zero-arg async functions with at most `limit` running simultaneously.
+// Safe in JS: `i++` is evaluated atomically before each `await`, so workers never
+// claim the same index even though they share the closure variable `i`.
+async function runConcurrently(tasks, limit) {
+  if (!tasks.length) return;
+  let i = 0;
+  async function worker() { while (i < tasks.length) await tasks[i++](); }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
 }
 
 // ─── startup ──────────────────────────────────────────────────────────────────

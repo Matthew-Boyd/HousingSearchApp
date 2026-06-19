@@ -769,7 +769,7 @@ function listItemHTML(feature) {
   const emv = p.ESTFMKVALUE ? Math.round(p.ESTFMKVALUE / (getRatioForParcel(p) / 100)) : null;
   const ab  = isAbsentee(p);
   const distText = e.nearestDistanceFt != null ? `${e.nearestDistanceFt.toLocaleString()} ft` : '—';
-  const distId   = !S.neighborDone && e.nearestDistanceFt == null ? ` id="li-dist-${CSS.escape(fid)}"` : '';
+  const distId   = !S.neighborDone && e.nearestDistanceFt == null ? ` id="li-dist-${fid}"` : '';
   const brSpan   = e.bedrooms != null ? `<span class="list-br">${e.bedrooms} bd</span>` : '';
   const badges   = (ab ? '<span class="badge badge-absentee">ABSENTEE</span>' : '')
                  + (S.hidden.has(fid) ? '<span class="badge badge-hidden">HIDDEN</span>' : '');
