@@ -54,7 +54,15 @@
       "Read(//tmp/**)",
       "Bash(python3 -c ' *)",
       "Bash(python3 *)",
-      "Bash(awk '{print $6\"=\"$7}')"
+      "Bash(awk '{print $6\"=\"$7}')",
+      "Bash(python fetch_dane_assessor.py)",
+      "WebFetch(domain:gisdata.washcowisco.gov)",
+      "WebFetch(domain:www.washcowisco.gov)",
+      "WebFetch(domain:www.associatedappraisal.com)",
+      "WebFetch(domain:www.catalisgov.com)",
+      "Bash(nslookup property.washcowisco.gov)",
+      "Bash(nslookup apps.washcowisco.gov)",
+      "WebFetch(domain:property.washcowisco.gov)"
     ]
   }
 }

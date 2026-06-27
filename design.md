@@ -263,24 +263,78 @@ Acreage field population observed per county (sample):
 - **Edge cases:** Very remote parcels with no buildings within the 5×5 neighborhood show "—".
 - **Why not SCO API:** The SCO service's hard limit is **2,000 records/query** regardless of `returnGeometry` (the "32,000 without geometry" planning assumption was wrong). A 9-county bounding box query would require ~150 pages and take 5–10 minutes. Local footprints eliminate all API calls for this feature entirely.
 
-### Phase 1: County Assessor Databases — DECISION: Scrape county CAMA web interfaces
-**Critical finding:** All 9 county FeatureServer APIs expose the same fields as the statewide SCO API. Building characteristics (bedrooms, sq ft, year built) are in each county's CAMA (Computer-Assisted Mass Appraisal) system, which is **not publicly accessible via API** in any of the 9 target counties. County GIS portals provide land/ownership data only.
+### Phase 1: County Assessor Databases — Revised Approach
 
-**Decision: Option B — Scrape individual county CAMA web interfaces.** Each county's web-based property lookup will be reverse-engineered and scraped server-side to retrieve bedrooms, sq ft, and year built per parcel. Scrapers are brittle (break when county sites change their HTML) and county-specific. Green County may need manual fallback. Implement scraper per county during Phase 1 build; test against live county sites before wiring to the filter.
+**Original plan:** Scrape each county's CAMA web interface per-parcel at query time. This is slow (one HTTP request per result) and brittle (breaks when a county site changes HTML).
 
-| County | Public API | Bulk Download | Bedrooms via API |
+**Revised approach (based on Dane County implementation):** Before writing a scraper, first identify the county's CAMA software vendor and check whether that vendor exposes a public API. Several vendors used in Wisconsin municipalities run public APIs that allow bulk download of all building data in a single paginated fetch. This is dramatically better than per-parcel scraping.
+
+#### How to identify a county's CAMA vendor
+
+1. Visit the county's public property search portal (usually found via `county.wi.us` or by searching "[county name] county property search Wisconsin")
+2. Look at the URL, page title, or footer — vendor names often appear there
+3. Check the SCWMLS (South Central Wisconsin MLS) assessor links page for Dane-area municipalities: `scwmls.com` → member resources → assessor links — lists which system each municipality uses
+4. For non-Dane counties, search `[county name] county wi cama assessor` to find the vendor
+
+#### CAMA vendor inventory (Wisconsin)
+
+| Vendor / System | API type | Bedrooms | Notes |
 |---|---|---|---|
-| Dane | ArcGIS FeatureServer (Open Data) | CSV/GeoJSON | No |
-| Jefferson | ArcGIS Open Data | CSV/GeoJSON | No |
-| Waukesha | ArcGIS FeatureServer (confirmed) | CSV/GeoJSON | No — field list verified |
-| Green | Web viewer only | Custom request | No — manual only |
-| Rock | ArcGIS via statewide | CSV/GeoJSON | No |
-| Walworth | ArcGIS FeatureServer | CSV/GeoJSON | No |
-| Columbia | ArcGIS Open Data | CSV/GeoJSON | No |
-| Dodge | ArcGIS Open Data + Beacon | CSV/GeoJSON | No |
-| Washington | ArcGIS Open Data | CSV/GeoJSON | No |
+| **AccurateAssessor (Prolorem)** | Public Dataverse OData API | Yes | No auth. Bulk-downloadable. See details below. |
+| **City of Madison** | Public ArcGIS MapServer REST | Yes | City-specific. `maps.cityofmadison.com/arcgis/...`. Bulk-downloadable via `resultOffset`. |
+| **CAMA Cloud (APRAz)** | None accessible | Unknown | Next.js SPA; AWS WAF blocks all JS bundles (403). Cannot reverse-engineer API without headless browser. |
+| **AssessorData.org** | Web scraping (POST+cookie+GET) | No | Has sqft and year built, but bedroom count is not exposed in the public portal. |
+| **JCLRS** (Jefferson County) | Custom web portal | No | Public summary report at `apps.jeffersoncountywi.gov/jc/JCLRS`. Bedroom data not exposed. |
+| **GCSWebPortal** (Dodge County) | ASP.NET session-based | Likely | `list.co.dodge.wi.us`. Requires establishing a session cookie before querying. |
+| **Ascent Land Records Suite** (Transcendent Technologies) | Angular SPA | Unknown | Used by Green, Columbia, Walworth, Washington counties. REST API endpoints exist but must be discovered via DevTools network inspection. Not yet implemented. |
+| **taxsearch.co.rock.wi.us** (Rock County) | PHP web portal | Unknown | Direct URL deep-link works: `parceldetails.php?taxid=`. Building data present but bedroom field not confirmed. |
 
-**Decision: B — Scrape individual county CAMA web interfaces** (see Section 14). One scraper per county, run server-side during the assessor enrichment pass. Brittle; treated as best-effort — parcels in counties whose scraper fails are excluded from the bedrooms filter with a per-county warning shown in the results header.
+#### AccurateAssessor (Prolorem Dataverse) — API details
+
+Used by many Dane County municipalities and potentially other Wisconsin counties. This is the highest-value API to check first.
+
+- **Base URL:** `https://accurateassessor.powerappsportals.com/_api/acc_realestates`
+- **Auth:** None — fully public
+- **Pagination:** Dataverse does NOT support `$skip`. Use `Prefer: odata.maxpagesize=500` header; follow `@odata.nextLink` in each response until absent.
+- **County filter:** `_acc_county_value eq '{COUNTY_GUID}'` — each county has a GUID in the Dataverse instance. Dane County GUID: `d8c67ee3-3692-eb11-b1ac-000d3a58b1bb`. To find GUIDs for other counties, query without a county filter and inspect a record's `_acc_county_value`.
+- **Parcel number:** Field `acc_parcelumber`, format `MMM/XXXXXXXXXXXX`. The 12-digit suffix matches the SCO statewide `PARCELID` directly.
+- **Building data** is in a related `acc_dwelling` entity, accessed via `$expand`:
+  ```
+  $expand=acc_acc_realestate_acc_dwelling_RealEstate($select=acc_bedroomcount,acc_totallivingarea,acc_yearbuilt)
+  ```
+  Fields: `acc_bedroomcount` (int), `acc_totallivingarea` (float, sq ft), `acc_yearbuilt` (ISO date string — take first 4 chars for year).
+
+#### Bulk caching strategy
+
+Per-parcel live API calls at query time are slow and unnecessary when the vendor supports bulk export. For any county where a full bulk fetch is possible:
+
+1. Run a one-time Python script (`fetch_dane_assessor.py` as the model) to download all parcels with building data
+2. Write results to `assessor-cache.json` as `{ "PARCELID": { bedrooms, sqft, yearBuilt, cachedAt }, ... }`
+3. Server loads this file into memory at startup via `loadAssessorCache()`
+4. `/assessor-query` hits the in-memory cache first; only falls through to a live scraper for uncached parcels
+5. Re-run the script annually when new assessment data is published (typically late spring)
+
+**Dane County results:** 97,321 parcels cached (30,906 from AccurateAssessor, 66,415 from City of Madison ArcGIS). 97,154 have bedroom count. File size: ~11 MB. Server loads in under 1 second.
+
+#### Per-county status
+
+| County | CAMA System | Bedrooms | Implementation | Notes |
+|---|---|---|---|---|
+| Dane | AccurateAssessor + City of Madison ArcGIS | Yes | Bulk cache (`fetch_dane_assessor.py`) | 97K parcels cached. AccurateAssessor covers ~30K (towns); Madison ArcGIS covers ~66K (city). CAMA Cloud municipalities (Westport, DeForest, Verona, etc.) are not covered — blocked by AWS WAF. |
+| Jefferson | JCLRS | No | Live scraper (stub — returns null) | Building data not exposed in public portal. |
+| Rock | taxsearch.co.rock.wi.us | Unknown | Live scraper (HTML parse) | Bedroom field not confirmed in live data. |
+| Dodge | GCSWebPortal (LIST) | Unknown | Live scraper (session-based) | Requires session cookie. Bedroom field not confirmed. |
+| Waukesha | Per-municipality (unknown) | Unknown | Stub | Session-based per-municipality portal. Not yet implemented. |
+| Green | Ascent (Transcendent Technologies) | Unknown | Stub | Angular SPA. API endpoints not yet discovered. |
+| Columbia | Ascent (Transcendent Technologies) | Unknown | Stub | Same vendor as Green. |
+| Walworth | Ascent (Transcendent Technologies) | Unknown | Stub | Same vendor as Green. |
+| Washington | Ascent (Transcendent Technologies) | Unknown | Stub | Same vendor as Green. |
+
+#### Recommended next steps for remaining counties
+
+**Ascent (Green, Columbia, Walworth, Washington):** Open `https://ascent.greencountywi.org/LandRecords/PropertyListing/RealEstateTaxParcel` in Chrome DevTools → Network → XHR/Fetch. Search for a known parcel and record the API request URL, headers, and response shape. If the API returns building data, implement a bulk fetch script (same pattern as `fetch_dane_assessor.py`). All four counties share the same vendor — one investigation covers all four.
+
+**AccurateAssessor coverage check for other counties:** Query the AccurateAssessor API without a county filter to see which Wisconsin counties have data. If Jefferson, Waukesha, or others appear, implement bulk fetch for those too before writing a scraper.
 
 ---
 
