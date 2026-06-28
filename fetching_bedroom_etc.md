@@ -463,6 +463,121 @@ All 21 municipalities lack bedroom data:
 
 ---
 
+## Options for Acquiring More Bedroom Data
+
+This section covers candidate approaches to close the coverage gaps documented above. Organized by feasibility tier.
+
+---
+
+### Tier 1 — Most Viable (Worth Pursuing)
+
+#### CAMA Cloud (Platinum Data / Data Technologies)
+Used by several uncovered Dane County municipalities: Waunakee, DeForest, Verona, Westport, Springfield, Bristol, Burke, Cottage Grove (village).
+
+The portal at `waukesha.camacloud.com` (and presumably `dane.camacloud.com`, etc.) performs a **browser detection check** and redirects unsupported browsers to a dead-end page. This is NOT an AWS WAF block — it's a JavaScript user-agent check that can likely be bypassed.
+
+**Approach:** Use Playwright with a realistic Chrome `User-Agent` string and allow JavaScript execution. The portal is an Angular/React SPA; once the browser check passes, XHR calls to the underlying API can be intercepted and replicated directly.
+
+- **Subdomain pattern:** `{county-slug}.camacloud.com` — Dane County would be `dane.camacloud.com` or `danecounty.camacloud.com`
+- **Status:** Unconfirmed whether a Dane County CAMA Cloud instance exists; Waukesha (`waukesha.camacloud.com`) was confirmed to redirect
+- **Potential gain:** 7–8 Dane municipalities (~15,000 parcels if the browser check can be bypassed)
+
+#### Regrid.com
+National parcel data aggregator (~150M parcels). Claims to include CAMA attributes (bedrooms, sqft, year built) where available from county sources.
+
+- **Trial:** 30-day free trial available; no credit card required per their site
+- **API:** REST API with GeoJSON output; can query by state/county FIPS code
+- **Wisconsin coverage:** Unknown — CAMA attribute fill rate varies widely by county. Regrid ingests official county GIS feeds, so their WI coverage reflects what counties publish, not what's extractable from private portals
+- **Potential gain:** Could fill gaps in Green, Dodge, Jefferson counties if those counties publish CAMA CSVs that Regrid ingests
+- **Verification step needed:** Sign up for trial and query a known-covered township to verify bedroom field is populated before committing
+
+#### County GIS Open Data Portals (Case-by-Case)
+Some WI counties publish CAMA attributes in their parcel shapefile/GeoJSON download. Worth checking for each county with large gaps:
+
+- **Green County:** Check `gis.co.green.wi.us` or Wisconsin Land Information Program (WLIP) submissions
+- **Dodge County:** Check `dodgecounty.net/departments/gis`
+- **Jefferson County:** Check Jefferson County GIS portal
+- **Columbia County:** ~30% of AA records couldn't be address-matched — check if Columbia County publishes a parcel CSV with `PARCELID` + building attributes that would allow direct join
+
+WLIP (Wisconsin Land Information Program, DNR) compiles county-submitted parcel data but the public download only has geometry + ownership fields, not CAMA.
+
+---
+
+### Tier 2 — Commercial (Cost vs. Coverage Trade-off)
+
+#### ATTOM Data Solutions
+Full property data platform covering all US residential parcels. Includes bedrooms, sqft, year built, sale history, AVM, and more.
+
+- **Pricing:** Not publicly listed; typical pricing is per-record or per-county annual subscription; likely $500–$5,000/year range for the scope needed here
+- **API:** REST with JSON; straightforward to bulk-pull by county
+- **Coverage:** Generally complete for residential properties — would likely fill all 9 counties including Washington
+- **Status during investigation:** HTTP 429 (rate limited) on initial unauthenticated probe; production API requires account + key
+- **Verdict:** Overkill for a cold-mail campaign unless the economics support it
+
+#### CoreLogic / Zillow / Realtor.com
+Similar commercial data vendors. CoreLogic is the largest; ATTOM is more accessible to small buyers. Zillow and Realtor.com APIs are consumer-facing and do not provide bulk parcel exports.
+
+---
+
+### Tier 3 — Technically Possible but Difficult
+
+#### Tyler Technologies iasWorld
+Tyler iasWorld is the dominant WI county assessor platform. Counties that use it sometimes expose a public-facing "Ascent" portal (as Washington County does) or a dedicated property search page.
+
+- **DNS probe results:** All attempted Tyler-hosted hostnames failed (DNS NXDOMAIN) during investigation. No single public API endpoint — each county has its own subdomain
+- **Pattern to investigate:** `{county}assess.tylerhost.net`, `assess.co.{county}.wi.us`, or county-branded subdomains
+- **Counties potentially on Tyler:** Washington County (confirmed Ascent LRS), possibly others
+- **Approach if pursued:** Per-parcel scraping via Playwright; no bulk API available for unauthenticated users
+
+#### DevNet Wedge
+Used by a subset of WI municipalities for assessor data lookup.
+
+- **Investigation result:** `www.devnetwedge.com/county/view/WI` returned 404 (verified with SSL disabled due to cert issues). The URL pattern may have changed.
+- **Potential alternative URL:** `devnetwedge.com/parcel/view/{STATE}/{COUNTY_CODE}/{PARCELID}` — if this works, per-parcel scraping could be feasible
+- **Scale concern:** Per-parcel scraping at 5,000–50,000 parcels/county is slow (~2–14 hours at 1 req/sec with politeness delay); only worthwhile for high-priority counties
+
+#### Playwright Scraping of County Assessor Portals
+For counties where the assessor uses a JS-rendered SPA (CAMA Cloud, Tyler Ascent, DevNet), headless browser automation could work:
+
+1. Launch Chrome via Playwright
+2. Navigate to the property search page
+3. For each parcel of interest, submit a search by address or parcel ID
+4. Extract bedroom/sqft/year from the rendered DOM
+
+**Why this approach is last resort:**
+- Slow: 1–3 seconds per parcel even with a fast connection
+- Fragile: SPA structure changes break scrapers
+- Rate-limited: Most portals block rapid automated requests
+- Only practical for targeted lookups (properties already on the filtered list), not bulk cache-building
+
+---
+
+### Tier 4 — Dead Ends
+
+| Source | Why ruled out |
+|---|---|
+| Wisconsin SCO ArcGIS | Geometry + ownership only; no CAMA attributes |
+| Wisconsin DOR | Aggregate municipal totals only; no per-parcel data |
+| AssessorData.org | Covers some WI municipalities but has sqft/year only — **no bedrooms** |
+| Washington County Ascent LRS | Property detail endpoint (`api/RealEstateTaxParcelService/{id}`) requires county staff login; returns HTTP 500 for all unauthenticated requests |
+| Washington County GIS (`gisdata.washcowisco.gov`) | 138 published datasets, none with CAMA attributes |
+| Associated Appraisal Consultants | Domain expired (GoDaddy parking page) |
+| CATALIS TAX & CAMA | No public portal |
+| Schultz Appraisal LLC | Small local firm, no portal |
+| Accurate Appraisal LLC | No public portal (different company from AccurateAssessor/Prolorem) |
+
+---
+
+### Recommended Next Steps
+
+1. **CAMA Cloud (Dane County):** Try accessing `dane.camacloud.com` (or the correct Dane subdomain) with Playwright and a real Chrome UA. If the browser check can be bypassed, bulk-fetch would cover 7–8 municipalities and ~15,000 parcels.
+
+2. **Regrid trial:** Sign up for the 30-day free trial and test bedroom field population for Green County townships. If fields are populated, Regrid could fill the Green/Dodge/Jefferson gaps without scraping.
+
+3. **Columbia County GIS download:** Check whether Columbia County publishes a parcel CSV with building attributes. If so, a direct PARCELID join would improve the current ~70% address-match rate.
+
+---
+
 ## Cache Summary After Last Run
 
 ```

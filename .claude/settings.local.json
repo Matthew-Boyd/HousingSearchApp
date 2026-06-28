@@ -62,7 +62,10 @@
       "WebFetch(domain:www.catalisgov.com)",
       "Bash(nslookup property.washcowisco.gov)",
       "Bash(nslookup apps.washcowisco.gov)",
-      "WebFetch(domain:property.washcowisco.gov)"
+      "WebFetch(domain:property.washcowisco.gov)",
+      "WebFetch(domain:www.regrid.com)",
+      "WebFetch(domain:www.attomdata.com)",
+      "WebFetch(domain:www.devnetwedge.com)"
     ]
   }
 }
