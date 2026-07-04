@@ -419,16 +419,21 @@ function parseLabelValueTable($) {
 
 // ── Dane County ───────────────────────────────────────────────────────────────
 // Access Dane is a tax-only portal — no building characteristics.
-// Building data comes from two public APIs, depending on municipality:
+// Building data comes from three sources, tried in order:
 //
-//   AccurateAssessor (Prolorem Dataverse): towns Albion, Berry, Blooming Grove, Cottage Grove,
-//     Cross Plains, Deerfield, Medina, Oregon, Perry, Pleasant Springs, Primrose, + villages.
-//     Has bedrooms, sqft, year built.
+//   1. AccurateAssessor (Prolorem Dataverse): towns Albion, Berry, Blooming Grove,
+//      Cottage Grove, Cross Plains, Deerfield, Medina, Oregon, Perry, Pleasant
+//      Springs, Primrose, + villages. Has bedrooms, sqft, year built.
 //
-//   City of Madison ArcGIS MapServer: City of Madison only.
-//     Has bedrooms, sqft, year built.
+//   2. City of Madison ArcGIS MapServer: City of Madison only.
+//      Has bedrooms, sqft, year built.
 //
-//   Other municipalities (York, Springdale, Bristol, Westport, …): no source available yet.
+//   3. CAMA Cloud (Playwright): Town of Bristol, Springfield, Westport, Burke;
+//      Village of Cottage Grove, Waunakee, DeForest, Verona, and others.
+//      Headless Chromium bypasses the AWS WAF that blocks direct HTTP requests.
+//
+//   Other municipalities (York, Springdale, Montrose, …): AssessorData.org has
+//     sqft/year but not bedrooms — not yet integrated.
 //
 async function scrapeDane(parcel) {
   const raw = String(parcel.parcelfid || '');
@@ -494,7 +499,16 @@ async function scrapeDane(parcel) {
     console.warn(`[assessor:DANE/Madison] ${pin}: ${err.message}`);
   }
 
-  // Municipalities not covered by either source (York, Springdale, Bristol, Westport, …).
+  // 3. CAMA Cloud (Playwright) — Bristol, Springfield, Westport, Burke,
+  //    Village of Cottage Grove, Waunakee, DeForest, Verona, and others.
+  try {
+    const result = await scrapeCamaCloud(parcel);
+    if (result.bedrooms != null || result.sqft != null) return result;
+  } catch (err) {
+    console.warn(`[assessor:DANE/CAMA] ${pin}: ${err.message}`);
+  }
+
+  // Municipality not covered by any integrated source.
   return { bedrooms: null, sqft: null, yearBuilt: null };
 }
 
@@ -541,6 +555,166 @@ async function scrapeDodge(parcel) {
     { headers: cookie ? { Cookie: cookie } : {} }
   );
   return parseLabelValueTable(cheerio.load(html));
+}
+
+// ── CAMA Cloud (Playwright) ───────────────────────────────────────────────────
+// CAMA Cloud (camacloudtech.com) is a Next.js App Router app protected by AWS
+// WAF (blocks plain HTTP clients). Playwright/Chromium bypasses the WAF.
+// We call Next.js Server Actions via fetch() from within the browser context
+// rather than interacting with the UI.
+//
+// Server Action IDs from bundle 0p14mvrli.wlm.js (extracted 2026-06-29):
+//   getCountyMunicipalities(countyId, taxYear)
+//   getCountyMuniAsmts(countyId, muniId, taxYear)
+// Dane County ID in CAMA Cloud system = 18.
+
+const CAMA_DANE_ID  = 18;
+const CAMA_TAX_YEAR = 2025;
+const CAMA_A_MUNIS  = '602705fe7f648d2191338614aa4308ff6099ba4904';
+const CAMA_A_ASMTS  = '700db83570b31e5a08831c07c12fefcbe2950c70c1';
+
+let _camaBrowser  = null;
+let _camaPage     = null;    // Persistent page for server action fetch() calls
+let _camaMuniLoad = null;    // Promise; set once; null = not started
+const _camaMuniMap   = new Map(); // normalised name → muniId
+const _camaAsmtCache = new Map(); // muniId → Map<taxKey, asmtId>
+
+async function camaGetPage() {
+  let chromium;
+  try {
+    ({ chromium } = require('playwright'));
+  } catch {
+    throw new Error('playwright not installed — run: npm install playwright && npx playwright install chromium');
+  }
+  if (!_camaBrowser || !_camaBrowser.isConnected()) {
+    _camaBrowser = await chromium.launch({ headless: true });
+    _camaPage    = null;
+  }
+  if (!_camaPage || _camaPage.isClosed()) {
+    const ctx = await _camaBrowser.newContext({ userAgent: SCRAPER_UA });
+    _camaPage  = await ctx.newPage();
+    await _camaPage.goto('https://camacloudtech.com/search', { waitUntil: 'networkidle', timeout: 30000 });
+  }
+  return _camaPage;
+}
+
+async function camaCallAction(actionId, args) {
+  const pg = await camaGetPage();
+  return pg.evaluate(async ({ actionId, args }) => {
+    const res = await fetch('https://camacloudtech.com/search', {
+      method: 'POST',
+      headers: { 'Next-Action': actionId, 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify(args),
+      credentials: 'include',
+    });
+    return { status: res.status, text: await res.text() };
+  }, { actionId, args });
+}
+
+function camaParseRsc(text) {
+  const parsed = {};
+  for (const line of (text || '').split('\n')) {
+    const m = line.match(/^(\w+):(.+)$/s);
+    if (m) { try { parsed[m[1]] = JSON.parse(m[2]); } catch {} }
+  }
+  return parsed;
+}
+
+function camaLoadMunis() {
+  if (_camaMuniLoad) return _camaMuniLoad;
+  _camaMuniLoad = (async () => {
+    const res    = await camaCallAction(CAMA_A_MUNIS, [CAMA_DANE_ID, CAMA_TAX_YEAR]);
+    const parsed = camaParseRsc(res.text);
+    const munis  = Object.values(parsed).find(v => Array.isArray(v) && v.length > 0 && v[0]?.id);
+    if (!munis) throw new Error('getCountyMunicipalities returned no data');
+    for (const m of munis) {
+      const key = (m.name || '').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (key) _camaMuniMap.set(key, m.id);
+    }
+    console.log(`[CAMA] Ready — ${_camaMuniMap.size} Dane municipalities`);
+  })().catch(err => {
+    _camaMuniLoad = null;
+    console.warn(`[CAMA] Municipality load failed: ${err.message}`);
+  });
+  return _camaMuniLoad;
+}
+
+function camaFindMuniId(cityname) {
+  if (_camaMuniMap.size === 0) return null;
+  const norm = (cityname || '').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (_camaMuniMap.has(norm)) return _camaMuniMap.get(norm);
+  const bare = norm.replace(/^(VILLAGE|TOWN|CITY) OF /, '');
+  for (const [k, v] of _camaMuniMap) {
+    if (k.replace(/^(VILLAGE|TOWN|CITY) OF /, '') === bare) return v;
+  }
+  for (const [k, v] of _camaMuniMap) {
+    if (k.includes(bare)) return v;
+  }
+  return null;
+}
+
+async function camaGetMuniAsmts(muniId) {
+  if (_camaAsmtCache.has(muniId)) return _camaAsmtCache.get(muniId);
+  const res    = await camaCallAction(CAMA_A_ASMTS, [CAMA_DANE_ID, muniId, CAMA_TAX_YEAR]);
+  const parsed = camaParseRsc(res.text);
+  const asmts  = Object.values(parsed).find(v => Array.isArray(v) && v.length > 0);
+  if (!asmts) throw new Error(`getCountyMuniAsmts(${muniId}) returned no data`);
+  const map = new Map();
+  for (const a of asmts) {
+    if (a.taxKeyNumber) map.set(a.taxKeyNumber, a.id);
+  }
+  _camaAsmtCache.set(muniId, map);
+  return map;
+}
+
+function pinToTaxKey(pin) {
+  // 12-digit SCO PIN → CAMA Cloud 4-3-4-1 format e.g. 0809-051-0005-1
+  return `${pin.slice(0,4)}-${pin.slice(4,7)}-${pin.slice(7,11)}-${pin.slice(11)}`;
+}
+
+function parseAsmtText(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  let bedrooms = null, sqft = null, yearBuilt = null;
+  for (let i = 0; i < lines.length - 1; i++) {
+    const lbl = lines[i].toLowerCase();
+    const val = lines[i + 1];
+    if (lbl === 'bedrooms:') {
+      const n = parseInt(val, 10);
+      if (!isNaN(n)) bedrooms = n;
+    } else if (lbl === 'year built:') {
+      const n = parseInt(val, 10);
+      if (!isNaN(n) && n > 1800) yearBuilt = n;
+    } else if (lbl === 'total living area:') {
+      const n = parseInt(val.replace(/,/g, ''), 10);
+      if (!isNaN(n)) sqft = n;
+    }
+  }
+  return { bedrooms, sqft, yearBuilt };
+}
+
+async function scrapeCamaCloud(parcel) {
+  await camaLoadMunis();
+
+  const muniId = camaFindMuniId(parcel.cityname);
+  if (!muniId) return { bedrooms: null, sqft: null, yearBuilt: null };
+
+  const pin = String(parcel.parcelfid || '').replace(/^[A-Z]+\//, '').replace(/-/g, '');
+  if (!/^\d{12}$/.test(pin)) throw new Error(`Unexpected PARCELID: ${parcel.parcelfid}`);
+
+  const taxKey  = pinToTaxKey(pin);
+  const asmtMap = await camaGetMuniAsmts(muniId);
+  const asmtId  = asmtMap.get(taxKey);
+  if (!asmtId) return { bedrooms: null, sqft: null, yearBuilt: null };
+
+  const pg   = await camaGetPage();
+  await pg.goto(`https://camacloudtech.com/search/asmt/${asmtId}`, { waitUntil: 'networkidle', timeout: 30000 });
+  const text   = await pg.evaluate(() => document.body.innerText);
+  const result = parseAsmtText(text);
+
+  if (result.bedrooms != null || result.sqft != null) {
+    console.log(`[assessor:DANE/CAMA] ${pin} → beds=${result.bedrooms} sqft=${result.sqft} yr=${result.yearBuilt}`);
+  }
+  return result;
 }
 
 const COUNTY_SCRAPERS = {

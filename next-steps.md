@@ -77,25 +77,19 @@ Record the findings in a table before starting any integration work. Counties wi
 - Each county has its own assessor database. Research needed: which counties expose a queryable API vs. require scraping vs. require manual lookup.
 - This is a significant engineering effort. Assess per-county data availability before committing to scope.
 
-### Dane County — Remaining Bedroom Gap (CAMA Cloud municipalities)
+### Dane County — CAMA Cloud Municipalities — **COMPLETE**
 
-**Background:** Dane County has no county-level CAMA system. Building data is held per-municipality. Three assessor systems are in use; two are implemented:
-- **AccurateAssessor** (Prolorem Dataverse API) — implemented, has bedrooms. Covers towns: Albion, Berry, Blooming Grove, Cottage Grove, Cross Plains, Deerfield, Medina, Oregon, Perry, Pleasant Springs, Primrose, and several villages.
-- **City of Madison ArcGIS MapServer** — implemented, has bedrooms.
-- **AssessorData.org** — not implemented for bedrooms because their public portal doesn't expose bedroom count (only sqft and year built). Covers: Town of York, Springdale, Vermont, Montrose, Roxbury, Rutland, Christiana, Vienna, Mazomanie, Middleton, Fitchburg, Sun Prairie, Dane.
+CAMA Cloud (`camacloudtech.com`) is now implemented as a live on-demand Playwright scraper (`scrapeCamaCloud()` in `server.js`), covering ~8 Dane County municipalities not served by AccurateAssessor or Madison ArcGIS: Town of Bristol, Springfield, Westport, Burke; Village of Cottage Grove, Waunakee, DeForest; City of Verona.
 
-**CAMA Cloud** (`camacloudtech.com`) — covers municipalities including Town of Bristol, Springfield, Westport, Burke, Cottage Grove (village), Waunakee, DeForest, Verona, and others. These are mostly villages and cities (fewer 4+ acre properties), but some rural towns are included.
+**What was discovered during implementation:**
+- CAMA Cloud is a Next.js App Router app, not an Angular SPA. The block is AWS WAF on JS bundle files only — not on the HTML or on API calls made from within a real browser context.
+- There is no XHR API to intercept or replicate. Data is served via **Next.js Server Actions** — POST calls to the page URL with a `Next-Action: <id>` header. These can be called from Playwright's `page.evaluate(() => fetch(...))` without any UI interaction.
+- **Playwright is a permanent dependency**, not a one-time reverse-engineering step. The WAF bypass only works from within a real browser context (headless Chromium).
+- Dane County ID in CAMA system: **18**. All 26 Dane municipalities are in the system.
+- Assessment data is parsed from `document.body.innerText` on `/search/asmt/{id}` pages. No batch detail endpoint was found.
+- Municipality list and per-municipality assessment ID lists are cached in memory for the server lifetime.
 
-**Why CAMA Cloud is blocked:** Their site is a Next.js SPA. The HTML shell loads fine, but their AWS WAF returns 403 Forbidden on all JavaScript bundle files. Without the JS executing, the API endpoint the site uses to fetch property data cannot be identified, so it can't be called directly.
-
-**Potential workaround:** Use a headless browser (Playwright or Puppeteer) to:
-1. Load the CAMA Cloud search page for a specific municipality
-2. Enter a parcel number into the search form
-3. Intercept the XHR/fetch network request the page makes to retrieve property data
-4. Extract the API endpoint URL and parameters from that intercepted request
-5. Implement a direct API call to that endpoint (bypassing the browser entirely going forward)
-
-This is a one-time reverse-engineering task, not a permanent dependency on headless browsing. Once the API endpoint is known, a simple `fetch()` call should work.
+See `fetching_bedroom_etc.md` → Dane County → CAMA Cloud section for full technical details including Server Action IDs and municipality table.
 
 ### School District Quality Layer
 - Wisconsin DPI publishes annual school report cards with district-level ratings.

@@ -282,7 +282,7 @@ Acreage field population observed per county (sample):
 |---|---|---|---|
 | **AccurateAssessor (Prolorem)** | Public Dataverse OData API | Yes | No auth. Bulk-downloadable. See details below. |
 | **City of Madison** | Public ArcGIS MapServer REST | Yes | City-specific. `maps.cityofmadison.com/arcgis/...`. Bulk-downloadable via `resultOffset`. |
-| **CAMA Cloud (APRAz)** | None accessible | Unknown | Next.js SPA; AWS WAF blocks all JS bundles (403). Cannot reverse-engineer API without headless browser. |
+| **CAMA Cloud (APRAz)** | Next.js Server Actions via Playwright | Yes | AWS WAF blocks JS bundles but not fetch() calls from within a browser session. Playwright establishes a headless Chromium session; Server Actions are called via `page.evaluate(() => fetch(...))`. Dane County ID=18; 26 municipalities. Live on-demand scraper — no batch detail endpoint available. |
 | **AssessorData.org** | Web scraping (POST+cookie+GET) | No | Has sqft and year built, but bedroom count is not exposed in the public portal. |
 | **JCLRS** (Jefferson County) | Custom web portal | No | Public summary report at `apps.jeffersoncountywi.gov/jc/JCLRS`. Bedroom data not exposed. |
 | **GCSWebPortal** (Dodge County) | ASP.NET session-based | Likely | `list.co.dodge.wi.us`. Requires establishing a session cookie before querying. |
@@ -320,7 +320,7 @@ Per-parcel live API calls at query time are slow and unnecessary when the vendor
 
 | County | CAMA System | Bedrooms | Implementation | Notes |
 |---|---|---|---|---|
-| Dane | AccurateAssessor + City of Madison ArcGIS | Yes | Bulk cache (`fetch_dane_assessor.py`) | 97K parcels cached. AccurateAssessor covers ~30K (towns); Madison ArcGIS covers ~66K (city). CAMA Cloud municipalities (Westport, DeForest, Verona, etc.) are not covered — blocked by AWS WAF. |
+| Dane | AccurateAssessor + City of Madison ArcGIS + CAMA Cloud | Yes | Bulk cache (`fetch_dane_assessor.py`) + live Playwright scraper (`scrapeCamaCloud()`) | 97K parcels bulk-cached. CAMA Cloud adds live on-demand coverage for ~8 municipalities (Westport, Springfield, Bristol, Burke, Verona, Waunakee, DeForest, Cottage Grove village) not in AccurateAssessor or Madison ArcGIS. |
 | Jefferson | JCLRS | No | Live scraper (stub — returns null) | Building data not exposed in public portal. |
 | Rock | taxsearch.co.rock.wi.us | Unknown | Live scraper (HTML parse) | Bedroom field not confirmed in live data. |
 | Dodge | GCSWebPortal (LIST) | Unknown | Live scraper (session-based) | Requires session cookie. Bedroom field not confirmed. |

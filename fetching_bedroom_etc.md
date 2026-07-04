@@ -78,7 +78,7 @@ To re-run a specific county only: `python fetch_other_counties.py jefferson wauk
 
 ### Dane County
 
-**Status:** Implemented. ~97,321 parcels cached (~30,906 from AccurateAssessor + ~66,415 from Madison ArcGIS).
+**Status:** Implemented. ~97,321 parcels bulk-cached (~30,906 from AccurateAssessor + ~66,415 from Madison ArcGIS). An additional ~8 municipalities (see CAMA Cloud section below) are covered by a live on-demand Playwright scraper in `server.js`.
 
 **AccurateAssessor GUID:** `d8c67ee3-3692-eb11-b1ac-000d3a58b1bb`
 
@@ -96,9 +96,79 @@ Municipalities covered: Albion, Berry, Blooming Grove, Cottage Grove, Cross Plai
 
 **Not covered (no bedroom data):**
 - AssessorData.org covers some Dane municipalities (York, Springdale, Vermont, Montrose, Roxbury, Rutland, Christiana, Vienna, Mazomanie, Middleton, Fitchburg, Sun Prairie, Dane) but has sqft/year built only — NO bedrooms
-- CAMA Cloud covers Waunakee, DeForest, Verona, Westport, Springfield, Bristol, Burke, Cottage Grove (village) — blocked by AWS WAF (403 on JS bundles)
 
-**Script:** `fetch_dane_assessor.py`
+**CAMA Cloud municipalities** — covered via live Playwright scraper (see below):
+- Towns of Westport, Springfield, Bristol, Burke
+- City of Verona; Villages of Waunakee, DeForest, Cottage Grove
+
+**Script:** `fetch_dane_assessor.py` (bulk cache); `scrapeCamaCloud()` in `server.js` (live on-demand)
+
+---
+
+#### CAMA Cloud — Playwright/Server Actions Implementation
+
+**URL:** `https://camacloudtech.com/search` (single shared instance, not county-subdomained)
+
+**Architecture:** Next.js App Router with React Server Components (RSC wire protocol). The AWS WAF blocks direct HTTP requests to JS bundle files (403) but does NOT block API calls made from within a real browser session. A headless Chromium session established by Playwright can call Next.js Server Actions directly via `page.evaluate(() => fetch(...))`, bypassing the WAF entirely.
+
+**How it works (implemented in `scrapeCamaCloud()` in `server.js`):**
+1. Playwright launches headless Chromium and loads `/search` once to establish a browser session
+2. Next.js Server Actions are called via POST to `https://camacloudtech.com/search` with a `Next-Action: <action_id>` header and JSON body — from within `page.evaluate()` so the request inherits the real browser session
+3. `getCountyMunicipalities(18, 2025)` returns all 26 Dane County municipalities
+4. `getCountyMuniAsmts(18, muniId, 2025)` returns all `{id, taxKeyNumber}` pairs for a municipality
+5. 12-digit SCO PIN is converted to CAMA's 4-3-4-1 tax key format (e.g., `080905100051` → `0809-051-0005-1`) to look up the `asmtId`
+6. The browser navigates to `/search/asmt/{asmtId}` and parses `document.body.innerText` for bedroom/sqft/yearBuilt
+
+**Municipality and assessment data is cached in memory** for the server lifetime — the 26 municipality IDs are fetched once, and each municipality's full assessment list is fetched once on first lookup (e.g., 6,353 entries for Waunakee). Subsequent lookups within the same municipality cost only one page navigation.
+
+**Server Action IDs** (extracted from JS bundle `0p14mvrli.wlm.js`):
+
+| Action | ID | Args |
+|---|---|---|
+| `getCounties` | `00c6d99903dbf097013d1a5eb63f38508010e13651` | `[]` |
+| `getCountyMunicipalities` | `602705fe7f648d2191338614aa4308ff6099ba4904` | `[countyId, taxYear]` |
+| `getCountyMuniAsmts` | `700db83570b31e5a08831c07c12fefcbe2950c70c1` | `[countyId, muniId, taxYear]` |
+| `getCountyMuniAddresses` | `70ce2dd91b3e221659869a45fef7c21f8c3d58a812` | `[countyId, muniId, taxYear]` |
+| `getAddressAsmts` | `6050aeb7d73d8afe6a593730c109306202e0333c0a` | `[countyId, muniId, taxYear]` |
+| `getCountyMuniTaxYears` | `6006fd7f87f6e7cfac057081d70f1abc64f1f70aa7` | `[countyId, muniId]` |
+
+**Dane County ID in CAMA system:** `18` (not the SCO county code; confirmed by calling `getCounties()`)
+
+**All 26 Dane County municipalities in CAMA Cloud:**
+
+| ID | Municipality | ID | Municipality |
+|---|---|---|---|
+| 349 | City of Middleton | 369 | City of Verona |
+| 323 | Town of Blue Mounds | 324 | Town of Bristol |
+| 326 | Town of Burke | 328 | Town of Christiana |
+| 330 | Town of Cottage Grove | 332 | Town of Cross Plains |
+| 338 | Town of Dunkirk | 339 | Town of Dunn |
+| 348 | Town of Medina | 364 | Town of Springfield |
+| 367 | Town of Sun Prairie | 370 | Town of Verona |
+| 371 | Town of Vienna | 373 | Town of Westport |
+| 319 | Village of Black Earth | 329 | Village of Cottage Grove |
+| 333 | Village of Dane | 337 | Village of DeForest |
+| 344 | Village of Maple Bluff | 345 | Village of Marshall |
+| 346 | Village of Mazomanie | 359 | Village of Rockdale |
+| 362 | Village of Shorewood Hills | 372 | Village of Waunakee |
+
+Note: Many of these overlap with AccurateAssessor and AssessorData.org coverage. CAMA Cloud is the third fallback in `scrapeDane()` and only fires for parcels not already in the bulk cache.
+
+**Assessment detail page text format** (parsed by `parseAsmtText()` in `server.js`):
+```
+Main Building Data
+Year Built:
+2016
+Style:
+Colonial
+Bedrooms:
+3
+Total Living Area:
+1,716
+```
+Label appears on its own line with trailing colon; value appears on the next line.
+
+**Bulk pre-caching consideration:** The current implementation is on-demand only. Pre-caching all CAMA Cloud Dane municipalities would require ~50,000+ page navigations (one per parcel) at ~3 sec each — roughly 40+ hours of serial Chromium traffic, which would likely trigger rate limiting. No batch detail endpoint was found. Bulk caching is not currently implemented.
 
 ---
 
@@ -348,7 +418,7 @@ Sources used to determine coverage: AccurateAssessor municipality list queried v
 - Towns of York, Springdale, Vermont, Montrose, Roxbury, Rutland, Christiana, Vienna, Mazomanie, Dane
 - Cities of Fitchburg, Middleton, Sun Prairie
 
-**No bedrooms — CAMA Cloud blocked (AWS WAF returns 403 on JS bundles):**
+**CAMA Cloud (live on-demand scraper, not bulk-cached):**
 - Towns of Westport, Springfield, Bristol, Burke
 - City of Verona; Villages of Waunakee, DeForest, Cottage Grove
 
@@ -449,7 +519,7 @@ All 21 municipalities lack bedroom data:
 
 | County | Total municipalities | Have bedroom data | Missing |
 |---|---|---|---|
-| Dane | 60 | ~12 (11 towns + Madison) | ~48 |
+| Dane | 60 | ~20 (11 towns via AA + Madison + ~8 via CAMA Cloud live scraper) | ~40 |
 | Green | 25 | 4 (all cities/villages, no towns) | 21 incl. all 15 towns |
 | Dodge | 44 | 3 | 41 incl. 22 of 23 towns |
 | Rock | 30 | 5 | 25 incl. 17 of 20 towns |
@@ -471,16 +541,11 @@ This section covers candidate approaches to close the coverage gaps documented a
 
 ### Tier 1 — Most Viable (Worth Pursuing)
 
-#### CAMA Cloud (Platinum Data / Data Technologies)
-Used by several uncovered Dane County municipalities: Waunakee, DeForest, Verona, Westport, Springfield, Bristol, Burke, Cottage Grove (village).
+#### CAMA Cloud — **IMPLEMENTED**
 
-The portal at `waukesha.camacloud.com` (and presumably `dane.camacloud.com`, etc.) performs a **browser detection check** and redirects unsupported browsers to a dead-end page. This is NOT an AWS WAF block — it's a JavaScript user-agent check that can likely be bypassed.
+Live on-demand Playwright scraper (`scrapeCamaCloud()` in `server.js`) covers all 26 Dane County municipalities in the CAMA Cloud system. See the CAMA Cloud section under Dane County above for full technical details.
 
-**Approach:** Use Playwright with a realistic Chrome `User-Agent` string and allow JavaScript execution. The portal is an Angular/React SPA; once the browser check passes, XHR calls to the underlying API can be intercepted and replicated directly.
-
-- **Subdomain pattern:** `{county-slug}.camacloud.com` — Dane County would be `dane.camacloud.com` or `danecounty.camacloud.com`
-- **Status:** Unconfirmed whether a Dane County CAMA Cloud instance exists; Waukesha (`waukesha.camacloud.com`) was confirmed to redirect
-- **Potential gain:** 7–8 Dane municipalities (~15,000 parcels if the browser check can be bypassed)
+**Remaining limitation:** No batch detail endpoint exists; each parcel requires one Chromium page navigation. Bulk pre-caching (~50,000 parcels) is not currently practical without rate-limiting mitigation. Data is fetched on demand when a user views a parcel.
 
 #### Regrid.com
 National parcel data aggregator (~150M parcels). Claims to include CAMA attributes (bedrooms, sqft, year built) where available from county sources.
@@ -570,7 +635,7 @@ For counties where the assessor uses a JS-rendered SPA (CAMA Cloud, Tyler Ascent
 
 ### Recommended Next Steps
 
-1. **CAMA Cloud (Dane County):** Try accessing `dane.camacloud.com` (or the correct Dane subdomain) with Playwright and a real Chrome UA. If the browser check can be bypassed, bulk-fetch would cover 7–8 municipalities and ~15,000 parcels.
+1. **~~CAMA Cloud (Dane County)~~** — **Done.** Implemented as a live on-demand Playwright scraper in `server.js`. Covers all 26 Dane County CAMA Cloud municipalities.
 
 2. **Regrid trial:** Sign up for the 30-day free trial and test bedroom field population for Green County townships. If fields are populated, Regrid could fill the Green/Dodge/Jefferson gaps without scraping.
 
