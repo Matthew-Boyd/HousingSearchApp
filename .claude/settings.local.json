@@ -65,7 +65,12 @@
       "WebFetch(domain:property.washcowisco.gov)",
       "WebFetch(domain:www.regrid.com)",
       "WebFetch(domain:www.attomdata.com)",
-      "WebFetch(domain:www.devnetwedge.com)"
+      "WebFetch(domain:www.devnetwedge.com)",
+      "WebFetch(domain:app.regrid.com)",
+      "WebFetch(domain:www.trustradius.com)",
+      "WebFetch(domain:regrid.com)",
+      "WebFetch(domain:www.oreateai.com)",
+      "WebFetch(domain:support.regrid.com)"
     ]
   }
 }

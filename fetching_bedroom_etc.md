@@ -189,6 +189,8 @@ Label appears on its own line with trailing colon; value appears on the next lin
 
 **Script:** `fetch_other_counties.py`
 
+**Ascent API investigation (2026-07-04):** `ascent.greencountywi.org` — both `api/RealEstateTaxParcelService/1` and `Services/api/LrsParcelLookup` timed out (ETIMEDOUT). The portal may be geo-blocked, down, or on a restricted network. Based on confirmed Walworth findings, the Green County Ascent system would hold the same field structure — tax records only, no CAMA building attributes — even if reachable. AccurateAssessor is the only source for Green County building data.
+
 ---
 
 ### Dodge County
@@ -210,6 +212,8 @@ Label appears on its own line with trailing colon; value appears on the next lin
 
 **Script:** `fetch_other_counties.py`
 
+**Live scraper investigation (2026-07-04):** `scrapeDodge()` in `server.js` is **broken**. `list.co.dodge.wi.us/GCSWebPortal/Search.aspx` immediately redirects unauthenticated requests to `Login.aspx`. Staff credentials are required. No workaround is possible without credentials. AccurateAssessor (bulk cache) is the only source.
+
 ---
 
 ### Rock County
@@ -225,6 +229,8 @@ Label appears on its own line with trailing colon; value appears on the next lin
 **Conversion:** Use as-is (no transformation needed).
 
 **Script:** `fetch_other_counties.py`
+
+**Live scraper investigation (2026-07-04):** `scrapeRock()` in `server.js` is **likely broken**. `taxsearch.co.rock.wi.us/parceldetails.php` requires the user to first visit `disclaimer.php` and accept terms of service. Even after obtaining a session cookie from that page, parcel detail requests return HTTP 500. The old domain (`www.co.rock.wi.us`) returns 403. It is unclear whether the portal exposes building data at all — no bedroom/sqft fields were observed in any response. Further investigation needed; if building data is not present, AccurateAssessor is the only source.
 
 ---
 
@@ -246,6 +252,8 @@ Label appears on its own line with trailing colon; value appears on the next lin
 
 **Script:** `fetch_other_counties.py`
 
+**Ascent API investigation (2026-07-04):** Walworth County's Ascent portal (`ascent.co.walworth.wi.us`) is publicly accessible — `GET /LandRecords/api/RealEstateTaxParcelService/{id}` returns HTTP 200 JSON for valid IDs. The response contains: owner mailing addresses, legal descriptions, total acres, school districts, tax bills, district memberships. The `Assessments` and `TaxParcelAssessmentRolls` fields are present in the schema but null for all tested records. **There are no bedroom, sqft, or year-built fields anywhere in the response.** The Ascent LRS is a tax administration system; CAMA building characteristics are in a separate system not exposed publicly. AccurateAssessor (bulk cache) is the only source for covered municipalities.
+
 ---
 
 ### Jefferson County
@@ -262,7 +270,7 @@ Label appears on its own line with trailing colon; value appears on the next lin
 
 **Important distinction:** Jefferson County KEEPS dashes in the SCO PARCELID; Dodge County STRIPS them. Both counties use the same `NNN-NNNN-NNNN-NNN` visual format. Never confuse these.
 
-**Note from previous investigation:** The JCLRS portal (`jclrs.co.jefferson.wi.us`) is a tax-only portal with no building data exposed. AccurateAssessor is the correct source.
+**Live test result (2026-07-04):** The JCLRS portal (`apps.jeffersoncountywi.gov/jc/JCLRS/parcel_summary_report/{PARCELID}`) returns HTTP 200 but contains only tax/billing data: assessed values, installment amounts, average assessment ratio, delinquency status. No bedrooms, sqft, or year-built fields are present anywhere in the HTML. AccurateAssessor is the only viable source for Jefferson County.
 
 **Script:** `fetch_other_counties.py`
 
@@ -284,6 +292,8 @@ Label appears on its own line with trailing colon; value appears on the next lin
 **Conversion:** Use as-is (no transformation needed).
 
 **Script:** `fetch_other_counties.py`
+
+**Live scraper investigation (2026-07-04):** `tax.waukeshacounty.gov` timed out — the portal is unreachable from this machine. This is consistent with the earlier note that the system requires session-based POST form interaction. AccurateAssessor already covers the three rural Waukesha townships most relevant to the 4+ acre search (Delafield, Lisbon, Summit). The remaining ~37 municipalities are mostly cities and villages with few large rural parcels. No further investigation planned.
 
 ---
 
@@ -314,6 +324,8 @@ Dekorra (~766 records), Pacific (~491), Courtland (~266), Cambria (~193), Caledo
 **Script:** `fetch_other_counties.py` (Columbia section uses `fetch_sco_columbia()` + `fetch_columbia()`)
 
 **Why ~30% unmatched:** Rural addresses in AA often omit city, use abbreviated street types, or appear on private roads with no SCO address record. These unmatched parcels are mostly land-only parcels (no dwelling).
+
+**Ascent API investigation (2026-07-04):** `ascent.co.columbia.wi.us` responds but `GET /LandRecords/api/RealEstateTaxParcelService/{id}` returns HTTP 500 "Sequence contains no elements" for low IDs (record doesn't exist) and empty output for higher IDs. Based on the confirmed Walworth findings, the Columbia Ascent system is the same product and holds the same field structure — tax records only, no CAMA building attributes. AccurateAssessor is the only source for Columbia County building data.
 
 ---
 
@@ -624,8 +636,11 @@ For counties where the assessor uses a JS-rendered SPA (CAMA Cloud, Tyler Ascent
 | Wisconsin SCO ArcGIS | Geometry + ownership only; no CAMA attributes |
 | Wisconsin DOR | Aggregate municipal totals only; no per-parcel data |
 | AssessorData.org | Covers some WI municipalities but has sqft/year only — **no bedrooms** |
-| Washington County Ascent LRS | Property detail endpoint (`api/RealEstateTaxParcelService/{id}`) requires county staff login; returns HTTP 500 for all unauthenticated requests |
+| Ascent LRS — all four counties (Green, Columbia, Walworth, Washington) | Confirmed tax administration system. Walworth API tested thoroughly (2026-07-04): `Assessments` and `TaxParcelAssessmentRolls` fields are null; no bedroom/sqft/yearBuilt fields exist in the response schema. CAMA data is in a separate system not exposed publicly. Washington additionally requires staff auth for property detail. |
 | Washington County GIS (`gisdata.washcowisco.gov`) | 138 published datasets, none with CAMA attributes |
+| `list.co.dodge.wi.us/GCSWebPortal` (Dodge County) | Redirects immediately to `Login.aspx` for unauthenticated users. Staff credentials required. `scrapeDodge()` in server.js is broken and cannot be fixed without credentials. |
+| `taxsearch.co.rock.wi.us` (Rock County) | Requires disclaimer page acceptance before parcel pages are accessible; returns HTTP 500 even with session cookie. `scrapeRock()` in server.js is likely broken. Whether building data exists is unconfirmed. |
+| `tax.waukeshacounty.gov` (Waukesha County) | Times out — unreachable. Session-based POST form required per earlier notes. |
 | Associated Appraisal Consultants | Domain expired (GoDaddy parking page) |
 | CATALIS TAX & CAMA | No public portal |
 | Schultz Appraisal LLC | Small local firm, no portal |
