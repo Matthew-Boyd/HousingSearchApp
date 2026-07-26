@@ -374,25 +374,32 @@ All confirmed Wisconsin county GUIDs in the AccurateAssessor Dataverse system:
 
 | County | GUID | Notes |
 |---|---|---|
-| Calumet | `b60d7f23-cd18-eb11-b1ac-000d3a353d78` | Not a target county |
+| Calumet | `b60d7f23-cd18-eb11-a813-000d3a353d78` | Not a target county |
 | Columbia | `25a4971a-56b5-ea11-a812-000d3a3be5cf` | Target — implemented |
 | Dane | `d8c67ee3-3692-eb11-b1ac-000d3a58b1bb` | Target — implemented |
 | Dodge | `90470156-f5c9-eb11-bacc-000d3a5a1c19` | Target — implemented |
+| Eau Claire | `6318b0f5-db8d-ec11-b400-00224808fb98` | Not a target county |
 | Grant | `9b6531b1-0509-eb11-a813-000d3a32896d` | Not a target county |
 | Green | `fe072b1a-3dfc-ea11-a815-000d3a353d78` | Target — implemented |
 | Jefferson | `dae12e4f-5518-eb11-a813-000d3a353d78` | Target — implemented |
 | Lafayette | `e14b57d6-be1a-eb11-a813-000d3a5a733e` | Not a target county |
+| Manitowoc | `fa319b2c-8d19-eb11-a813-000d3a5a733e` | Not a target county |
 | Marathon | `141e6657-5d19-eb11-a813-000d3a353d78` | Not a target county |
 | Milwaukee | `db42b6ef-6007-eb11-a813-000d3a32896d` | Not a target county |
 | Monroe | `9bc6ae7e-a22a-ec11-b6e5-000d3a332cf1` | Not a target county |
 | Outagamie | `c723a526-56b5-ea11-a812-000d3a3be5cf` | Not a target county |
+| Ozaukee | `f80beaec-03e7-ea11-a817-000d3a353d78` | Not a target county |
 | Rock | `06bc1ad7-b3ee-ea11-a817-000d3a353d78` | Target — implemented |
 | Sauk | `5aa2d1c0-4225-ec11-b6e5-000d3a5bb925` | Not a target county |
 | Shawano | `630eadcb-ff00-ec11-94ef-000d3a5b3acc` | Not a target county |
+| Sheboygan | `f03916f0-fe00-ec11-94ef-000d3a5b3acc` | Not a target county |
+| St Croix | `0a1df9ab-56d4-ea11-a813-000d3a3bef84` | Not a target county |
+| Taylor | `92e7a2f9-a569-ec11-8943-00224803c290` | Not a target county |
 | Walworth | `8676bc1f-b143-eb11-a813-00224803df6d` | Target — implemented |
 | Waukesha | `e96a44ab-9444-eb11-a813-00224803df6d` | Target — implemented |
+| Waupaca | `f8b0071a-daf6-eb11-94ef-000d3a5b3ac0` | Not a target county |
 
-Washington County is **not in AccurateAssessor** (confirmed by querying known cities: West Bend, Hartford, Germantown, Slinger, Jackson — none matched Washington County in AA).
+Washington County is **not in AccurateAssessor**. Confirmed twice: (1) city-name queries for West Bend, Hartford, Germantown, Slinger, Jackson, Kewaskum returned zero records; (2) a 40-page broad scan (20,000 records) of the full AA dataset surfaced 24 distinct county GUIDs — Washington is absent. The GUID count plateaued for the final ~15 pages, so additional pages are unlikely to reveal it. Washington County has no AA GUID.
 
 ---
 
@@ -655,6 +662,8 @@ For counties where the assessor uses a JS-rendered SPA (CAMA Cloud, Tyler Ascent
 2. **Regrid trial:** Sign up for the 30-day free trial and test bedroom field population for Green County townships. If fields are populated, Regrid could fill the Green/Dodge/Jefferson gaps without scraping.
 
 3. **Columbia County GIS download:** Check whether Columbia County publishes a parcel CSV with building attributes. If so, a direct PARCELID join would improve the current ~70% address-match rate.
+
+4. **PropStream trial:** Sign up for the 7-day free trial (50 leads, no scriptable API — UI + CSV export only). Use their filter UI to pull a list scoped to the target counties/acreage, export it once as CSV, and manually check whether bedrooms/sqft/year built are populated for Washington County and the rural towns currently missing (Green, Dodge, Jefferson, Waukesha, Rock, Columbia). If coverage looks good, a paid month's 25,000 exports could close most of the remaining gap in one pass.
 
 ---
 
