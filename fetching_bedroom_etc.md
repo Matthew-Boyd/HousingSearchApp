@@ -663,7 +663,94 @@ For counties where the assessor uses a JS-rendered SPA (CAMA Cloud, Tyler Ascent
 
 3. **Columbia County GIS download:** Check whether Columbia County publishes a parcel CSV with building attributes. If so, a direct PARCELID join would improve the current ~70% address-match rate.
 
-4. **PropStream trial:** Sign up for the 7-day free trial (50 leads, no scriptable API — UI + CSV export only). Use their filter UI to pull a list scoped to the target counties/acreage, export it once as CSV, and manually check whether bedrooms/sqft/year built are populated for Washington County and the rural towns currently missing (Green, Dodge, Jefferson, Waukesha, Rock, Columbia). If coverage looks good, a paid month's 25,000 exports could close most of the remaining gap in one pass.
+4. **PropStream trial:** Sign up for the 7-day free trial (50 leads, no scriptable API — UI + CSV export only). Use their filter UI to pull a list scoped to the target counties/acreage, export it once as CSV, and manually check whether bedrooms/sqft/year built are populated for Washington County and the rural towns currently missing (Green, Dodge, Jefferson, Waukesha, Rock, Columbia). If coverage looks good, a paid month's 25,000 exports could close most of the remaining gap in one pass. **See detailed evaluation plan below.**
+
+---
+
+## PropStream Evaluation Plan
+
+The trial gives exactly one shot at 50 lead exports before it either expires or requires payment. The plan below exists to spend that budget on a decision-grade sample instead of ad-hoc exploration, since the 50-lead cap can't be reset by re-signing up with the same identity/payment method.
+
+**Goal:** determine whether PropStream's CAMA data (bedrooms/sqft/year built) is (a) *present* and (b) *accurate* for the specific gap this project has — Washington County entirely, plus the rural towns in Green, Dodge, Jefferson, Waukesha, Rock, and Columbia counties listed under "Municipality Coverage Gaps" above — and whether it's worth a paid tier to close that gap.
+
+---
+
+### Step 0 — Quantify the actual need before spending trial credits
+
+The muni-level gap tables above (e.g. "22 of 23 Dodge towns uncovered") count *all* parcels in those townships, not just the 4+ acre rural parcels this campaign actually targets. The real number needed from PropStream is much smaller. Before touching the trial:
+
+1. Run the existing acreage filter (whatever currently selects 4+ acre candidates from the SCO parcel layer) scoped to the uncovered municipalities only, and count how many candidate parcels fall in each gap county/town.
+2. This produces the real target list size (likely low hundreds, not tens of thousands) and tells you:
+   - How to weight the 50-lead trial sample across counties (proportional to real need, not raw muni count).
+   - Whether a single paid month (25,000 exports) can cover the *entire* remaining gap in one pass, or whether it needs to be prioritized.
+
+This step uses data already in hand — no new scraping.
+
+---
+
+### Step 1 — Trial signup logistics
+
+1. Confirm current signup terms directly on PropStream's site before starting the clock — verify whether a credit card is required up front (unconfirmed in prior notes) and whether the 7-day/50-lead limits are still current, since vendor trial terms change.
+2. If a card is required, set a calendar reminder 1 day before the trial ends to cancel, to avoid an unwanted charge for a tier you haven't evaluated yet.
+3. Use a dedicated signup email so results/exports are easy to find later and the account can be cleanly abandoned if it's a no-go.
+
+---
+
+### Step 2 — Build the 50-lead sample allocation
+
+Split the 50 exports across two purposes:
+
+**A. Accuracy control group (~10 leads)** — pulled from counties/towns *already* covered by AccurateAssessor (e.g. a few Dane or Walworth parcels where bedroom count is already known from the cache). This is the only way to check whether PropStream's numbers are *correct*, not just *present* — field population alone doesn't prove accuracy.
+
+**B. Gap-fill probe (~40 leads)**, weighted by Step 0's real-need counts, prioritized:
+1. Washington County first (highest value — currently 0 parcels, entire county blocked). Spread across a few different towns (e.g. Farmington, Trenton, Wayne, Polk) rather than one town, since CAMA data source quality can vary by assessor vendor even within a county.
+2. Then one or two rural towns each from Green, Dodge, Jefferson, Waukesha, Rock, Columbia — enough to check whether PropStream's source differs by county (it likely aggregates from different upstream feeds per county, so a pass in one county doesn't guarantee a pass in another).
+
+Record the exact parcel addresses/PARCELIDs chosen *before* opening PropStream, so the export isn't spent iterating in the UI.
+
+---
+
+### Step 3 — In-app exploration before spending export credits
+
+PropStream's property detail view (not the CSV export) may show bedrooms/sqft/year built for free within the trial — check this first for every parcel in the Step 2 list. If the detail page already shows the fields, note the values directly and reserve export credits only for parcels where you need the data in bulk/structured form. This can stretch the 50-export budget significantly if detail-page viewing is unmetered.
+
+---
+
+### Step 4 — Export and verify
+
+1. Export the finalized sample as CSV.
+2. For the **control group**: compare PropStream's bedroom/sqft/year-built values against the known-correct values already in `assessor-cache.json`. Compute an agreement rate.
+3. For the **gap-fill probe**: compute a field-population rate (% of parcels with non-null bedrooms) per county/town.
+4. Note what identifier PropStream uses per parcel (APN, address, or something else) — this determines whether a future bulk import can join to SCO `PARCELID` directly or needs an address-normalization join like the one built for Columbia County (`fetch_sco_columbia()`).
+
+---
+
+### Step 5 — Go/no-go decision criteria
+
+| Signal | Threshold to proceed |
+|---|---|
+| Control-group accuracy | Bedroom count matches cache within ±0 for most records (this is a hard field; even ±1 disagreement across many records signals a stale/bad source) |
+| Gap-fill field population | Majority of sampled parcels have non-null bedrooms — spotty coverage (e.g. only 1–2 of 10 populated) isn't worth a paid tier |
+| Washington County specifically | Since this is the only source that could recover Washington at all, weight this county's result heavily even if other counties are borderline |
+| Join key | Address-only join is acceptable (Columbia precedent exists) but adds ~30% unmatched-rate risk based on that prior experience |
+
+---
+
+### Step 6 — If GO: integration path
+
+1. Purchase one paid month scoped to the real need count from Step 0 (not the full 25,000/month cap, unless the real need actually approaches that).
+2. Export the full target list as CSV.
+3. Write a one-off `fetch_propstream.py`-style import script that parses the CSV and either:
+   - Direct-joins on APN if PropStream's APN maps cleanly to SCO `PARCELID` for the relevant counties, or
+   - Address-joins using the same normalization approach as `fetch_sco_columbia()` / `fetch_columbia()`.
+4. Merge results into `assessor-cache.json` in the existing `{ bedrooms, sqft, yearBuilt, cachedAt }` schema.
+5. Update the Coverage Summary table and per-county sections above to reflect the new source.
+
+---
+
+### Step 7 — If NO-GO: fallback
+
+Document the specific failure mode (no data / bad accuracy / bad join key) in this file under a new "PropStream" entry in the Tier 4 Dead Ends table, with the same level of detail as the existing Ascent LRS / AssessorData.org entries, so this isn't re-investigated later. Fall back to Tier 3 options (Tyler iasWorld probing, DevNet Wedge, or targeted Playwright scraping) only for the highest-priority remaining gap (Washington County), given how labor-intensive those options are per the existing notes.
 
 ---
 

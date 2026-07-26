@@ -70,7 +70,9 @@
       "WebFetch(domain:www.trustradius.com)",
       "WebFetch(domain:regrid.com)",
       "WebFetch(domain:www.oreateai.com)",
-      "WebFetch(domain:support.regrid.com)"
+      "WebFetch(domain:support.regrid.com)",
+      "Bash(node _cama_debug.js)",
+      "Bash(python count_gap_parcels.py)"
     ]
   }
 }

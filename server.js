@@ -32,7 +32,7 @@ const buildingGrid = new Map();
 // Browser-like User-Agent for county assessor scraping.
 const SCRAPER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-const SCO_URL           = 'https://services3.arcgis.com/n6uYoouQZW75n5WI/arcgis/rest/services/Wisconsin_Statewide_Parcels/FeatureServer/0/query';
+const SCO_URL           = 'https://services3.arcgis.com/n6uYoouQZW75n5WI/arcgis/rest/services/Wisconsin_Statewide_Parcels_DB/FeatureServer/0/query';
 const FEMA_URL          = 'https://services.arcgis.com/2gdL2gxYNFY2TOUb/arcgis/rest/services/FEMA_National_Flood_Hazard_Layer/FeatureServer/0/query';
 const NWI_URL           = 'https://fwspublicservices.wim.usgs.gov/wetlandsmapservice/rest/services/Wetlands/MapServer/0/query';
 const DOR_URL           = 'https://www.revenue.wi.gov/SLFReportscotvc/2025sumagg.xlsx';
@@ -563,15 +563,20 @@ async function scrapeDodge(parcel) {
 // We call Next.js Server Actions via fetch() from within the browser context
 // rather than interacting with the UI.
 //
-// Server Action IDs from bundle 0p14mvrli.wlm.js (extracted 2026-06-29):
+// Server Action IDs from bundle 0hds_li8i1oin.js (extracted 2026-07-26):
 //   getCountyMunicipalities(countyId, taxYear)
 //   getCountyMuniAsmts(countyId, muniId, taxYear)
 // Dane County ID in CAMA Cloud system = 18.
+// NOTE: Next.js re-hashes these IDs on every deploy of camacloudtech.com, so
+// they will go stale again. If munis start failing with "action not found",
+// re-extract: curl the /search page for its /_next/static/chunks/*.js list,
+// download each chunk, and grep for "getCountyMunicipalities"/"getCountyMuniAsmts" —
+// the createServerReference(...) call immediately before each name has the new ID.
 
 const CAMA_DANE_ID  = 18;
 const CAMA_TAX_YEAR = 2025;
-const CAMA_A_MUNIS  = '602705fe7f648d2191338614aa4308ff6099ba4904';
-const CAMA_A_ASMTS  = '700db83570b31e5a08831c07c12fefcbe2950c70c1';
+const CAMA_A_MUNIS  = '600d5b11deb80767f90baba9a38a053277076cb213';
+const CAMA_A_ASMTS  = '70a08497e34fecc1b2e85b6393f86335091ebed9b5';
 
 let _camaBrowser  = null;
 let _camaPage     = null;    // Persistent page for server action fetch() calls

@@ -333,6 +333,16 @@ const TARGET_COUNTIES = ['DANE','JEFFERSON','WAUKESHA','GREEN','ROCK','WALWORTH'
 const CLASS_COLORS = {'1':'#185FA5','2':'#3B6D11','4':'#BA7517','5':'#993C1D'};
 const DEFAULT_COLOR = '#5F5E5A';
 const HIDDEN_COLOR  = '#7c3aed';
+
+// PROPCLASS may be a compound value ('1,4', '4,5M', ...); pick the color for
+// the first recognized component instead of requiring an exact key match.
+function getClassColor(propclass) {
+  if (!propclass) return DEFAULT_COLOR;
+  for (const code of String(propclass).split(',')) {
+    if (CLASS_COLORS[code]) return CLASS_COLORS[code];
+  }
+  return DEFAULT_COLOR;
+}
 // V11 field names (all uppercase). GISACRES is null for some counties; WHERE clause uses COALESCE.
 const OUT_FIELDS = [
   'PARCELID','OWNERNME1','OWNERNME2','PSTLADRESS','SITEADRESS',
@@ -639,11 +649,20 @@ function buildWhereClause() {
   if (!isNaN(maxAcres))              conds.push(`${acresExpr} <= ${maxAcres}`);
   if (document.getElementById('structureOnly').checked) conds.push('IMPVALUE > 0');
 
-  const classes = [];
-  if (document.getElementById('class1').checked) classes.push("'1'");
-  if (document.getElementById('class4').checked) classes.push("'4'");
-  if (classes.length === 0) return null;
-  conds.push(`PROPCLASS IN (${classes.join(',')})`);
+  const classCodes = [];
+  if (document.getElementById('class1').checked) classCodes.push('1');
+  if (document.getElementById('class4').checked) classCodes.push('4');
+  if (classCodes.length === 0) return null;
+  // PROPCLASS isn't always a single code — many WI counties store compound
+  // comma-separated values ('1,4', '4,5M', ...) for parcels that mix uses,
+  // e.g. a house on agricultural land. An exact IN(...) match silently drops
+  // those, which was hiding most rural candidate parcels in several counties.
+  // Match each code as a comma-delimited component instead.
+  const classConds = classCodes.flatMap(c => [
+    `PROPCLASS='${c}'`, `PROPCLASS LIKE '${c},%'`,
+    `PROPCLASS LIKE '%,${c}'`, `PROPCLASS LIKE '%,${c},%'`
+  ]);
+  conds.push(`(${classConds.join(' OR ')})`);
 
   const counties = getSelectedCounties();
   if (counties.length === 0) return null;
@@ -721,7 +740,7 @@ function buildMarker(feature, isHidden) {
   if (isHidden) return buildHiddenMarker(feature);
   const p  = feature.properties;
   const ab = isAbsentee(p);
-  const color = CLASS_COLORS[p.PROPCLASS] || DEFAULT_COLOR;
+  const color = getClassColor(p.PROPCLASS);
   const marker = L.circleMarker([feature._centroid.lat, feature._centroid.lng], {
     renderer,
     radius:       ab ? 7 : 5,
