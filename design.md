@@ -151,7 +151,7 @@ Three files. Run with `node server.js`, open `http://localhost:3000`.
 ## 5. Data Sources
 
 ### Primary: Wisconsin Statewide Parcel Map (SCO)
-- **Endpoint:** `https://services3.arcgis.com/n6uYoouQZW75n5WI/arcgis/rest/services/Wisconsin_Statewide_Parcels/FeatureServer/0`
+- **Endpoint:** `https://services3.arcgis.com/n6uYoouQZW75n5WI/arcgis/rest/services/Wisconsin_Statewide_Parcels_DB/FeatureServer/0` (note the `_DB` suffix — easy to drop by mistake; a version without it returns a generic "Invalid URL" error rather than a 404)
 - **Current version:** V11 (service name `V1100_WisconsinParcels_2025_0925_2`), loaded Feb 2025. Tax roll year 2024.
 - Free under Wisconsin Public Records Law.
 - Hard limit: 2,000 records per query with geometry; 32,000 per query without geometry — **pagination required in v1**.
@@ -174,7 +174,7 @@ Three files. Run with `node server.js`, open `http://localhost:3000`.
 | `GISACRES` | GIS Acres | **Null for some counties** (see acreage note below) |
 | `ASSDACRES` | Assessed Acres | Fallback when GISACRES is null |
 | `DEEDACRES` | Deeded Acres | Second fallback |
-| `PROPCLASS` | Class of Property | String: `'1'` residential, `'4'` agricultural |
+| `PROPCLASS` | Class of Property | String: `'1'` residential, `'4'` agricultural. **Not always a single code** — many counties store compound comma-separated values (`'1,4'`, `'4,5M'`, ...) for parcels mixing uses. Match with `PROPCLASS='1' OR PROPCLASS LIKE '1,%' OR PROPCLASS LIKE '%,1' OR PROPCLASS LIKE '%,1,%'` (per code), not exact `IN (...)` — see `getClassColor()` / `buildWhereClause()` in `index.html` |
 | `CONAME` | County Name | Uppercase, no "COUNTY" suffix — e.g., `'DANE'` |
 | `PLACENAME` | Place Name | Municipality name **with type prefix** — e.g., `'TOWN OF PERRY'`, `'CITY OF MADISON'` |
 | `NETPRPTA` | Net Property Tax | Annual dollar amount |
@@ -574,8 +574,9 @@ AND ESTFMKVALUE <= 720000
 AND COALESCE(GISACRES, ASSDACRES, DEEDACRES) >= 4
 AND IMPVALUE > 0
 AND CONAME IN ('DANE', 'JEFFERSON', 'WAUKESHA')
-AND PROPCLASS = '1'
+AND (PROPCLASS='1' OR PROPCLASS LIKE '1,%' OR PROPCLASS LIKE '%,1' OR PROPCLASS LIKE '%,1,%')
 ```
+Note: an exact `PROPCLASS = '1'` match (used in an earlier version of this tool) silently excludes compound-class parcels like `'1,4'`. This was a live bug — fixed 2026-07-26 — that hid a meaningful share of qualifying rural parcels in every county's search results. See `fetching_bedroom_etc.md` → "PropStream Evaluation Plan" → Step 0 for the discovery and corrected gap counts.
 
 ---
 

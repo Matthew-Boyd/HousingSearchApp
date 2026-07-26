@@ -1008766,5 +1008766,1043 @@
     "sqft": null,
     "yearBuilt": null,
     "cachedAt": 1785091041737
+  },
+  "050830388200": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106973998
+  },
+  "051031492200": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106973999
+  },
+  "050813490407": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106973999
+  },
+  "051101180100": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106974434
+  },
+  "051131191600": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106974888
+  },
+  "051207495004": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106975378
+  },
+  "051106396900": {
+    "bedrooms": 4,
+    "sqft": 3107,
+    "yearBuilt": 1979,
+    "cachedAt": 1785106978089
+  },
+  "051107285957": {
+    "bedrooms": 4,
+    "sqft": 3107,
+    "yearBuilt": 1979,
+    "cachedAt": 1785106978090
+  },
+  "051135486900": {
+    "bedrooms": 4,
+    "sqft": 3107,
+    "yearBuilt": 1979,
+    "cachedAt": 1785106978091
+  },
+  "060602180005": {
+    "bedrooms": 4,
+    "sqft": 3107,
+    "yearBuilt": 1979,
+    "cachedAt": 1785106978091
+  },
+  "060602183600": {
+    "bedrooms": 4,
+    "sqft": 3107,
+    "yearBuilt": 1979,
+    "cachedAt": 1785106978092
+  },
+  "060605497507": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106978925
+  },
+  "060604295003": {
+    "bedrooms": 3,
+    "sqft": 4363,
+    "yearBuilt": 1992,
+    "cachedAt": 1785106983493
+  },
+  "060608291705": {
+    "bedrooms": 3,
+    "sqft": 4363,
+    "yearBuilt": 1992,
+    "cachedAt": 1785106983493
+  },
+  "060609190900": {
+    "bedrooms": 3,
+    "sqft": 4363,
+    "yearBuilt": 1992,
+    "cachedAt": 1785106983494
+  },
+  "060608180503": {
+    "bedrooms": 3,
+    "sqft": 4363,
+    "yearBuilt": 1992,
+    "cachedAt": 1785106983495
+  },
+  "060616240010": {
+    "bedrooms": 3,
+    "sqft": 4363,
+    "yearBuilt": 1992,
+    "cachedAt": 1785106983495
+  },
+  "060627381304": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106984459
+  },
+  "060635380004": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106984543
+  },
+  "060635383805": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106985310
+  },
+  "060704185102": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106986060
+  },
+  "060706200010": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106986822
+  },
+  "060628192105": {
+    "bedrooms": 4,
+    "sqft": 2754,
+    "yearBuilt": 1960,
+    "cachedAt": 1785106987360
+  },
+  "060635380808": {
+    "bedrooms": 4,
+    "sqft": 2754,
+    "yearBuilt": 1960,
+    "cachedAt": 1785106987361
+  },
+  "060620190729": {
+    "bedrooms": 4,
+    "sqft": 2754,
+    "yearBuilt": 1960,
+    "cachedAt": 1785106987362
+  },
+  "060635387801": {
+    "bedrooms": 4,
+    "sqft": 2754,
+    "yearBuilt": 1960,
+    "cachedAt": 1785106987364
+  },
+  "060708280610": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106988118
+  },
+  "060626190030": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106988151
+  },
+  "060635382002": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106988949
+  },
+  "060715380700": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106989689
+  },
+  "060717190000": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106990428
+  },
+  "060615191005": {
+    "bedrooms": 3,
+    "sqft": 1741,
+    "yearBuilt": 1984,
+    "cachedAt": 1785106990940
+  },
+  "060626497710": {
+    "bedrooms": 3,
+    "sqft": 1741,
+    "yearBuilt": 1984,
+    "cachedAt": 1785106990941
+  },
+  "060622292204": {
+    "bedrooms": 3,
+    "sqft": 1741,
+    "yearBuilt": 1984,
+    "cachedAt": 1785106990941
+  },
+  "060634495311": {
+    "bedrooms": 3,
+    "sqft": 1741,
+    "yearBuilt": 1984,
+    "cachedAt": 1785106990942
+  },
+  "060719195403": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106991217
+  },
+  "060726388101": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106991510
+  },
+  "060728481603": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106991546
+  },
+  "060724285001": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106991629
+  },
+  "060729286500": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106991645
+  },
+  "060732187200": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106991906
+  },
+  "060709188207": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106992186
+  },
+  "060708497116": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106992296
+  },
+  "060719185400": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106992306
+  },
+  "060731184000": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106992401
+  },
+  "060922395008": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106992959
+  },
+  "060836191007": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106992982
+  },
+  "060909198505": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106993050
+  },
+  "060922380005": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106993050
+  },
+  "060925186402": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106993548
+  },
+  "060924194202": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106993730
+  },
+  "060922290004": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106994266
+  },
+  "061032180003": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106994351
+  },
+  "060923187302": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106994376
+  },
+  "060925440012": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106994955
+  },
+  "061203183552": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106995474
+  },
+  "060809186707": {
+    "bedrooms": 1,
+    "sqft": 1855,
+    "yearBuilt": 1997,
+    "cachedAt": 1785106998160
+  },
+  "061010392101": {
+    "bedrooms": 1,
+    "sqft": 1855,
+    "yearBuilt": 1997,
+    "cachedAt": 1785106998161
+  },
+  "061208190008": {
+    "bedrooms": 1,
+    "sqft": 1855,
+    "yearBuilt": 1997,
+    "cachedAt": 1785106998162
+  },
+  "061220289200": {
+    "bedrooms": 1,
+    "sqft": 1855,
+    "yearBuilt": 1997,
+    "cachedAt": 1785106998162
+  },
+  "061224485106": {
+    "bedrooms": 1,
+    "sqft": 1855,
+    "yearBuilt": 1997,
+    "cachedAt": 1785106998163
+  },
+  "070601198610": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106998791
+  },
+  "070604187806": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106998864
+  },
+  "070604185004": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106998998
+  },
+  "070607196100": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106999342
+  },
+  "070626185900": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106999493
+  },
+  "070626380450": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106999588
+  },
+  "070623191900": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106999594
+  },
+  "070626380700": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785106999959
+  },
+  "070634296010": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107000165
+  },
+  "070628396401": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107000259
+  },
+  "070714190004": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107000267
+  },
+  "061219497850": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107000820
+  },
+  "061224298407": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107000966
+  },
+  "061226397207": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107003885
+  },
+  "070716290901": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107003886
+  },
+  "061213495009": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107003887
+  },
+  "061227385003": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107003888
+  },
+  "061230187908": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107003888
+  },
+  "070609290410": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107004565
+  },
+  "070604182050": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107004663
+  },
+  "070610396202": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107004813
+  },
+  "070615395301": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107004934
+  },
+  "070625485703": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107005384
+  },
+  "070623398007": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107005402
+  },
+  "070624489400": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107005552
+  },
+  "070630490107": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107005718
+  },
+  "070636280350": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107006135
+  },
+  "070718188600": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107006292
+  },
+  "071215287710": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107006711
+  },
+  "080605385419": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107007240
+  },
+  "080605385820": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107007363
+  },
+  "080606480019": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107007924
+  },
+  "061230290715": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107008012
+  },
+  "070715295700": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107008013
+  },
+  "070719385009": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107008014
+  },
+  "080606480706": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107008014
+  },
+  "080612285004": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107008643
+  },
+  "080606491516": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107008675
+  },
+  "080606487156": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107008686
+  },
+  "080615300110": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107008827
+  },
+  "080616397900": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107009025
+  },
+  "080619280603": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107009422
+  },
+  "080619480503": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107009470
+  },
+  "080619497500": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107009771
+  },
+  "080619481708": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107009834
+  },
+  "080619495006": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107009891
+  },
+  "080620191902": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107010173
+  },
+  "080620287000": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107010379
+  },
+  "080620486406": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107010590
+  },
+  "080620286700": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107010627
+  },
+  "080621181500": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107010738
+  },
+  "080620492202": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107010749
+  },
+  "080623386803": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107011125
+  },
+  "080623495007": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107011331
+  },
+  "080625180405": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107011376
+  },
+  "080625180709": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107011381
+  },
+  "080626185613": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107011577
+  },
+  "080626188003": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107011925
+  },
+  "080626396805": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107011932
+  },
+  "080820480006": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107012219
+  },
+  "071103294012": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107012507
+  },
+  "071114295009": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107012573
+  },
+  "080612187200": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107012943
+  },
+  "080616395003": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107013105
+  },
+  "080612492000": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107013106
+  },
+  "080616398500": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107013675
+  },
+  "080619185001": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107013675
+  },
+  "080616490510": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107013948
+  },
+  "080619195018": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107014248
+  },
+  "080619483100": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107014310
+  },
+  "080620184205": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107014629
+  },
+  "080624495005": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107014844
+  },
+  "080620492408": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107014947
+  },
+  "080819485004": {
+    "bedrooms": 3,
+    "sqft": 1864,
+    "yearBuilt": 1881,
+    "cachedAt": 1785107015071
+  },
+  "071121280001": {
+    "bedrooms": 3,
+    "sqft": 1864,
+    "yearBuilt": 1881,
+    "cachedAt": 1785107015071
+  },
+  "080628294100": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107015293
+  },
+  "080628295018": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107015602
+  },
+  "080628295705": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107015612
+  },
+  "080629490402": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107015819
+  },
+  "080631187200": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107015821
+  },
+  "081017185613": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107016244
+  },
+  "080635291100": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107016274
+  },
+  "081024285706": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107016506
+  },
+  "081132154287": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107016706
+  },
+  "090613490001": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107017095
+  },
+  "090633397709": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107017349
+  },
+  "090624186000": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107017384
+  },
+  "090701488900": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107017886
+  },
+  "090713297504": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107017982
+  },
+  "090716394900": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107018313
+  },
+  "090801288000": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107018552
+  },
+  "090803486700": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107018929
+  },
+  "090801288300": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107019068
+  },
+  "090833385905": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107019440
+  },
+  "090833490710": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107019673
+  },
+  "090922297210": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107019685
+  },
+  "091228497000": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107020135
+  },
+  "081116382454": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107020194
+  },
+  "081036495109": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107020194
+  },
+  "081223297808": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107020312
+  },
+  "081224383409": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107020773
+  },
+  "090624185010": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107020851
+  },
+  "090624492110": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107020958
+  },
+  "090625490015": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107020967
+  },
+  "090713493110": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107021111
+  },
+  "090729495609": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107021504
+  },
+  "090733388100": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107021566
+  },
+  "090714395003": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107021690
+  },
+  "090808298502": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107021756
+  },
+  "090816486909": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107021960
+  },
+  "091027289400": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107022097
+  },
+  "091119492800": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1785107022264
   }
 }

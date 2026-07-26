@@ -405,7 +405,7 @@ Washington County is **not in AccurateAssessor**. Confirmed twice: (1) city-name
 
 ## SCO PARCELID Format by County
 
-The SCO ArcGIS FeatureServer (`https://services3.arcgis.com/n6uYoouQZW75n5WI/arcgis/rest/services/Wisconsin_Statewide_Parcels/FeatureServer/0/query`) stores parcel IDs in the `PARCELID` field. Formats vary by county:
+The SCO ArcGIS FeatureServer (`https://services3.arcgis.com/n6uYoouQZW75n5WI/arcgis/rest/services/Wisconsin_Statewide_Parcels_DB/FeatureServer/0/query` — note the `_DB` suffix, confirmed against `server.js`; a version without it returns a generic "Invalid URL" error) stores parcel IDs in the `PARCELID` field. Formats vary by county:
 
 | County | SCO PARCELID format | Example |
 |---|---|---|
@@ -663,7 +663,7 @@ For counties where the assessor uses a JS-rendered SPA (CAMA Cloud, Tyler Ascent
 
 3. **Columbia County GIS download:** Check whether Columbia County publishes a parcel CSV with building attributes. If so, a direct PARCELID join would improve the current ~70% address-match rate.
 
-4. **PropStream trial:** Sign up for the 7-day free trial (50 leads, no scriptable API — UI + CSV export only). Use their filter UI to pull a list scoped to the target counties/acreage, export it once as CSV, and manually check whether bedrooms/sqft/year built are populated for Washington County and the rural towns currently missing (Green, Dodge, Jefferson, Waukesha, Rock, Columbia). If coverage looks good, a paid month's 25,000 exports could close most of the remaining gap in one pass. **See detailed evaluation plan below.**
+4. **PropStream trial:** Sign up for the 7-day free trial (50 leads, no scriptable API — UI + CSV export only). Use their filter UI to pull a list scoped to the target counties/acreage, export it once as CSV, and manually check whether bedrooms/sqft/year built are populated for Washington County and the rural towns currently missing (Green, Dodge, Jefferson, Waukesha, Rock, Columbia). Step 0 below (done) found the real gap is 70,016 parcels, not the ~25,000 a single paid month's export cap covers — so this will likely take 2–3 months of subscription to close fully, or one month prioritized by county. **See detailed evaluation plan below.**
 
 ---
 
@@ -675,16 +675,30 @@ The trial gives exactly one shot at 50 lead exports before it either expires or 
 
 ---
 
-### Step 0 — Quantify the actual need before spending trial credits
+### Step 0 — Quantify the actual need before spending trial credits — **DONE (2026-07-26)**
 
-The muni-level gap tables above (e.g. "22 of 23 Dodge towns uncovered") count *all* parcels in those townships, not just the 4+ acre rural parcels this campaign actually targets. The real number needed from PropStream is much smaller. Before touching the trial:
+The muni-level gap tables above (e.g. "22 of 23 Dodge towns uncovered") count *all* parcels in those townships, not just the 4+ acre rural parcels this campaign actually targets. The real number needed from PropStream is much smaller than the raw muni counts, though not as small as first assumed (see bug note below).
 
-1. Run the existing acreage filter (whatever currently selects 4+ acre candidates from the SCO parcel layer) scoped to the uncovered municipalities only, and count how many candidate parcels fall in each gap county/town.
-2. This produces the real target list size (likely low hundreds, not tens of thousands) and tells you:
-   - How to weight the 50-lead trial sample across counties (proportional to real need, not raw muni count).
-   - Whether a single paid month (25,000 exports) can cover the *entire* remaining gap in one pass, or whether it needs to be prioritized.
+**Script:** `count_gap_parcels.py` — queries the SCO ArcGIS layer per gap county (`>= 4 acres`, `PROPCLASS IN (1, 4)`) and cross-checks each `PARCELID` against `assessor-cache.json` to count real candidates missing bedroom data, broken down by county and municipality.
 
-This step uses data already in hand — no new scraping.
+**Bug found and fixed during this step:** the first run returned suspiciously low counts (25,249 total). Investigation traced it to `PROPCLASS` not always being a single code — many counties store compound comma-separated values (`'1,4'`, `'4,5M'`, ...) for parcels mixing residential and agricultural use, and an exact `PROPCLASS IN ('1','4')` match silently drops all of those. This is not specific to the gap counties or to bedroom data — the identical bug existed in the **live search tool** (`buildWhereClause()` in `index.html`), meaning real cold-mail candidate parcels (a house on ag-classified acreage is exactly this campaign's target profile) have been silently excluded from search results in all 9 counties since the tool was built. **Fixed 2026-07-26** in both `count_gap_parcels.py` and `index.html` (component-wise `LIKE` matching instead of exact `IN`); a matching fix was also needed for the map-marker color lookup (`getClassColor()`), which did the same exact-key lookup. See `design.md` Section 5 for the corrected field notes and example WHERE clause.
+
+**Corrected results** (4+ acre, PROPCLASS 1 or 4 including compound values, missing bedroom data):
+
+| County | Candidates | Missing bedrooms |
+|---|---|---|
+| Waukesha | 15,578 | 15,040 |
+| Dodge | 14,121 | 13,974 |
+| Columbia | 12,460 | 11,455 |
+| Green | 11,017 | 11,007 |
+| Jefferson | 10,165 | 9,906 |
+| Rock | 8,765 | 8,112 |
+| Washington | 522 | 522 |
+| **Total** | **72,628** | **70,016** |
+
+This is the real PropStream trial/paid-tier sizing target: **70,016 parcels**, not the 25,249 from the buggy first pass, and far more than the "low hundreds" originally guessed. A single paid month (25,000 exports, per Step 6 below) would cover roughly a third of this — Step 6's integration plan should prioritize by county rather than assume one pass closes the whole gap.
+
+Note: Washington County's real number (522) is much larger than the pre-fix figure (264) but still tiny relative to the other counties — confirmed genuine (not a data-null artifact) by checking PROPCLASS distribution directly against the SCO layer.
 
 ---
 

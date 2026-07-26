@@ -91,6 +91,16 @@ CAMA Cloud (`camacloudtech.com`) is now implemented as a live on-demand Playwrig
 
 See `fetching_bedroom_etc.md` → Dane County → CAMA Cloud section for full technical details including Server Action IDs and municipality table.
 
+### Compound PROPCLASS Filter Bug — **FIXED (2026-07-26)**
+
+The live search tool's `buildWhereClause()` in `index.html` filtered candidate parcels with `PROPCLASS IN ('1','4')` — an exact match. Many WI counties store compound comma-separated `PROPCLASS` values (`'1,4'`, `'4,5M'`, ...) for parcels mixing residential and agricultural use, which an exact match silently excludes. Since a house on ag-classified acreage is exactly this campaign's target profile, this had been hiding real candidate parcels from every search, in every county, since the tool was built.
+
+**Fix:** match each selected class code as a comma-delimited component (`PROPCLASS='1' OR PROPCLASS LIKE '1,%' OR PROPCLASS LIKE '%,1' OR PROPCLASS LIKE '%,1,%'`) instead of exact `IN (...)`. Also fixed the map-marker color lookup (`getClassColor()` in `index.html`), which had the same exact-key-match problem against `CLASS_COLORS`.
+
+**Discovered via:** writing `count_gap_parcels.py` for the PropStream evaluation plan (see `fetching_bedroom_etc.md` → "PropStream Evaluation Plan" → Step 0), where it first showed up as suspiciously low candidate counts for Washington County.
+
+**Verified:** re-ran the real search query (with the buyer's $900K/95% budget filter) through the live `/parcel-query` proxy, before and after the fix. Net new candidates surfaced: Columbia +254, Rock +119, Waukesha +39, Green +130, Dodge +63, Jefferson +110 (Washington's newly-surfaced compound-class parcels all happened to exceed the current budget ceiling, so no visible change there at this specific budget).
+
 ### School District Quality Layer
 - Wisconsin DPI publishes annual school report cards with district-level ratings.
 - School district boundaries are available as GIS data and could be overlaid on the map.
