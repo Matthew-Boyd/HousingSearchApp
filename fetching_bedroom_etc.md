@@ -710,17 +710,34 @@ Note: Washington County's real number (522) is much larger than the pre-fix figu
 
 ---
 
-### Step 2 — Build the 50-lead sample allocation
+### Step 2 — Build the 50-lead sample allocation — **DONE (2026-07-26), revised scope**
 
-Split the 50 exports across two purposes:
+**Script:** `propstream_sample.py` — extends `count_gap_parcels.py`'s query (4+ acres, compound-aware PROPCLASS match, missing from `assessor-cache.json`) with `SITEADRESS IS NOT NULL` (required to search PropStream by address) and pulls `SITEADRESS`/`ESTFMKVALUE` so the output is directly usable in the trial UI.
 
-**A. Accuracy control group (~10 leads)** — pulled from counties/towns *already* covered by AccurateAssessor (e.g. a few Dane or Walworth parcels where bedroom count is already known from the cache). This is the only way to check whether PropStream's numbers are *correct*, not just *present* — field population alone doesn't prove accuracy.
+**Scope change:** the buyer asked to target *every* county with missing bedroom data, not just the 7 counties previously flagged as "gap" counties — so this now covers all **9** target counties. Dane and Walworth both turned out to have real (if smaller) gaps too, matching the uncovered municipalities already listed under "Municipality Coverage Gaps" above (e.g. Dane's ~40 uncovered munis, Walworth's 7 uncovered towns).
 
-**B. Gap-fill probe (~40 leads)**, weighted by Step 0's real-need counts, prioritized:
-1. Washington County first (highest value — currently 0 parcels, entire county blocked). Spread across a few different towns (e.g. Farmington, Trenton, Wayne, Polk) rather than one town, since CAMA data source quality can vary by assessor vendor even within a county.
-2. Then one or two rural towns each from Green, Dodge, Jefferson, Waukesha, Rock, Columbia — enough to check whether PropStream's source differs by county (it likely aggregates from different upstream feeds per county, so a pass in one county doesn't guarantee a pass in another).
+**Sampling approach used (deviates from the original plan):** rather than a dedicated 10-lead accuracy control group + weighted gap-fill probe, the sample is an even ~5–6-per-county split, round-robin across each county's distinct municipalities (largest-gap towns first), since the immediate goal is breadth — determining *which counties* PropStream has data for — not yet accuracy validation. A dedicated control-group pull (known-good parcels from AccurateAssessor-covered towns) is still needed before Step 4's accuracy check and should be a small follow-up once coverage-by-county is known.
 
-Record the exact parcel addresses/PARCELIDs chosen *before* opening PropStream, so the export isn't spent iterating in the UI.
+**Important finding — the address requirement significantly shrinks the "real" gap, but this is not a data problem:** requiring `SITEADRESS IS NOT NULL` drops Green County's candidate count from 11,007 (Step 0, no address filter) to 3,971. Checked directly against the SCO layer: of Green's 7,036 address-less candidates, 6,614 also have `IMPVALUE = 0` — i.e. vacant land with no structure at all, so there was never going to be a bedroom count for them regardless of source. Only 422 have a real structure but happen to lack a recorded address (not currently searchable by address; a small edge case, not pursued further here).
+
+**Corrected "usable" gap (4+ acres, qualifying class, missing bedrooms, has an address) — the real target for PropStream:**
+
+| County | Usable gap | Municipalities w/ gap |
+|---|---|---|
+| Waukesha | 13,589 | 37 |
+| Dodge | 5,537 | 38 |
+| Dane | 5,371 | 54 |
+| Rock | 4,487 | 28 |
+| Green | 3,971 | 21 |
+| Jefferson | 3,497 | 25 |
+| Columbia | 3,533 | 34 |
+| Walworth | 2,558 | 28 |
+| Washington | 492 | 18 |
+| **Total** | **43,035** | |
+
+**Output:** `propstream_sample.csv` (columns: `county, municipality, parcelid, address, propclass, est_fmv`) — 50 addresses, 5–6 per county, spread across municipalities. Ready to check against PropStream directly.
+
+Record the exact parcel addresses/PARCELIDs chosen *before* opening PropStream, so the export isn't spent iterating in the UI — this list already does that.
 
 ---
 
@@ -733,8 +750,8 @@ PropStream's property detail view (not the CSV export) may show bedrooms/sqft/ye
 ### Step 4 — Export and verify
 
 1. Export the finalized sample as CSV.
-2. For the **control group**: compare PropStream's bedroom/sqft/year-built values against the known-correct values already in `assessor-cache.json`. Compute an agreement rate.
-3. For the **gap-fill probe**: compute a field-population rate (% of parcels with non-null bedrooms) per county/town.
+2. For the **control group** (not included in the current `propstream_sample.csv` pass — pull a small follow-up sample of known-covered parcels, e.g. via `count_gap_parcels.py`'s cache-hit set, once coverage-by-county from Step 3/4 narrows down which counties are worth validating): compare PropStream's bedroom/sqft/year-built values against the known-correct values already in `assessor-cache.json`. Compute an agreement rate.
+3. For the **gap-fill probe** (`propstream_sample.csv`): compute a field-population rate (% of parcels with non-null bedrooms) per county/town — this is what determines which counties PropStream can help with.
 4. Note what identifier PropStream uses per parcel (APN, address, or something else) — this determines whether a future bulk import can join to SCO `PARCELID` directly or needs an address-normalization join like the one built for Columbia County (`fetch_sco_columbia()`).
 
 ---
