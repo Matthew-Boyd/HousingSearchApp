@@ -106,6 +106,9 @@ See `fetching_bedroom_etc.md` → Dane County → CAMA Cloud section for full te
 - Not built into the tool currently — manage via a spreadsheet for now.
 - If the volume of responses warrants it, consider adding a lightweight per-parcel status column (Contacted / Responded / Visited / Offer Made / Closed / Passed) that persists between sessions using local storage or a simple JSON file.
 
+### Insurance costs
+
+### Property tax cost
 ---
 
 ## Pre-Purchase Checklist Items (Per Property)
