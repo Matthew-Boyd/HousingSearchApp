@@ -152,6 +152,8 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 .popup-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;padding-top:6px;border-top:1px solid #eee}
 .popup-zillow{font-size:11px;color:#185FA5;background:none;border:none;padding:0;cursor:pointer;text-decoration:none}
 .popup-zillow:hover{text-decoration:underline}
+.popup-maps{font-size:11px;color:#185FA5;background:none;border:none;padding:0;cursor:pointer;text-decoration:none}
+.popup-maps:hover{text-decoration:underline}
 .popup-hide-btn{
   font-size:11px;padding:2px 8px;background:#e5e7eb;border:1px solid #ccc;
   border-radius:3px;cursor:pointer;
@@ -908,6 +910,9 @@ function buildPopupHTML(feature) {
   const isHid = S.hidden.has(fid);
   const zillowQ = encodeURIComponent((p.SITEADRESS || getAddress(p)) + ' WI');
   const acres = p.GISACRES ?? p.ASSDACRES ?? p.DEEDACRES;
+  const mapsUrl = feature._centroid
+    ? `https://www.google.com/maps/@?api=1&map_action=map&center=${feature._centroid.lat},${feature._centroid.lng}&zoom=20&basemap=satellite`
+    : null;
 
   const floodVal = e.floodZone != null
     ? (e.floodZone === 'NONE' ? 'None' : `<span style="color:${e.floodZone.startsWith('A') || e.floodZone.startsWith('V') ? '#b91c1c' : '#166534'}">${e.floodZone}</span>`)
@@ -955,6 +960,7 @@ function buildPopupHTML(feature) {
     </div>
     <div class="popup-actions">
       <button class="popup-zillow" onclick="event.stopPropagation();window.open('https://www.zillow.com/homes/${zillowQ}/', '_blank')">Check Zillow ↗</button>
+      ${mapsUrl ? `<button class="popup-maps" onclick="event.stopPropagation();window.open('${mapsUrl}', '_blank')">Open in Maps ↗</button>` : ''}
       <button class="popup-hide-btn ${isHid ? 'unhide' : ''}" onclick="toggleHidden('${fid.replace(/'/g, "\\'")}')">${isHid ? 'Unhide' : 'Hide this property'}</button>
     </div>
   </div>`;
