@@ -336,7 +336,7 @@ const HIDDEN_COLOR  = '#7c3aed';
 // Parcel boundary outlines only render once the map is zoomed in this far (roughly
 // block-level scale) — drawing them at wider zooms would mean fetching and rendering
 // far more polygons than are usefully visible.
-const PARCEL_LINES_MIN_ZOOM = 16;
+const PARCEL_LINES_MIN_ZOOM = 17;
 
 // PROPCLASS may be a compound value ('1,4', '4,5M', ...); pick the color for
 // the first recognized component instead of requiring an exact key match.
@@ -387,6 +387,7 @@ const map = L.map('map', {
   zoom: 8,
   preferCanvas: true,
 });
+L.control.scale({ position: 'bottomright', imperial: true, metric: false }).addTo(map);
 
 const cartoLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
   attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
