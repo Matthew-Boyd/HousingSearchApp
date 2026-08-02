@@ -497,6 +497,17 @@ function toggleLayer() {
     cartoLight.addTo(map);
     document.getElementById('layer-toggle').textContent = 'Satellite';
   }
+  restyleParcelBoundaries();
+}
+
+// White reads clearly against satellite imagery; black reads clearly against the light basemap.
+function getBoundaryColor() {
+  return isSatellite ? '#ffffff' : '#000000';
+}
+
+function restyleParcelBoundaries() {
+  const color = getBoundaryColor();
+  for (const layer of S.parcelBoundaryCache.values()) layer.setStyle({ color });
 }
 
 function setupResizer() {
@@ -808,13 +819,14 @@ async function updateParcelBoundaries() {
     const res  = await fetch(`/parcel-query?${params}`, { signal: ctrl.signal });
     const data = await res.json();
     if (ctrl.signal.aborted) return;
+    const color = getBoundaryColor();
     for (const feature of (data.features || [])) {
       const pid = feature.properties.PARCELID;
       if (!pid || S.parcelBoundaryCache.has(pid)) continue;
       const layer = L.geoJSON(feature, {
         renderer,
         interactive: false,
-        style: { color: '#ffffff', weight: 1.5, opacity: 0.9, fill: false },
+        style: { color, weight: 1.5, opacity: 0.9, fill: false },
       });
       S.parcelBoundaryCache.set(pid, layer);
       parcelBoundaryGroup.addLayer(layer);
