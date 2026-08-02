@@ -652,6 +652,7 @@ For counties where the assessor uses a JS-rendered SPA (CAMA Cloud, Tyler Ascent
 | CATALIS TAX & CAMA | No public portal |
 | Schultz Appraisal LLC | Small local firm, no portal |
 | Accurate Appraisal LLC | No public portal (different company from AccurateAssessor/Prolorem) |
+| PropStream (2026-08-01 trial) | Tested a 50-address sample spanning all 9 target counties (`propstream_sample.csv`). Only 9/50 (18%) returned a bedroom value, and 3/50 came back as an outright address-match failure ("unknown address"), not just missing data. Field population was **0%** for Green, Columbia, Dodge, and Walworth (0 of 20 sampled), and only 1/5 for Washington County — the single highest-priority gap this trial existed to fill — with 3 of the other 4 Washington rows failing address match entirely. The only county with usable population was **Waukesha (5/6, 83%)** — it accounts for the large majority of the 9 populated results (5 of 9), but those hits are city/village addresses (New Berlin, City of Waukesha, City of Pewaukee, City of Brookfield, Village of Menomonee Falls), several with condo/unit-style addresses, not the rural 4+ acre profile this campaign targets. Fails the Step 5 go/no-go bar (majority field population; Washington weighted heavily) — see Step 5 below. Parcel IDs are PropStream's own (e.g. `NBC 1161532`, `WAKC1359357`) and don't map to SCO `PARCELID`, so even a Waukesha-only pull would need an address join with the same risk profile as Columbia's ~30% unmatched rate. **Verdict: not worth a paid tier.** |
 
 ---
 
@@ -747,27 +748,33 @@ PropStream's property detail view (not the CSV export) may show bedrooms/sqft/ye
 
 ---
 
-### Step 4 — Export and verify
+### Step 4 — Export and verify — **DONE (2026-08-01)**
 
-1. Export the finalized sample as CSV.
-2. For the **control group** (not included in the current `propstream_sample.csv` pass — pull a small follow-up sample of known-covered parcels, e.g. via `count_gap_parcels.py`'s cache-hit set, once coverage-by-county from Step 3/4 narrows down which counties are worth validating): compare PropStream's bedroom/sqft/year-built values against the known-correct values already in `assessor-cache.json`. Compute an agreement rate.
-3. For the **gap-fill probe** (`propstream_sample.csv`): compute a field-population rate (% of parcels with non-null bedrooms) per county/town — this is what determines which counties PropStream can help with.
-4. Note what identifier PropStream uses per parcel (APN, address, or something else) — this determines whether a future bulk import can join to SCO `PARCELID` directly or needs an address-normalization join like the one built for Columbia County (`fetch_sco_columbia()`).
+Notes were hand-recorded per parcel directly in `propstream_sample.csv` (bedroom count, `MISSING`, or a status label like `NONRESIDENCE`/`UNKNOWN_ADDRESS`/`FARMFIELD`) rather than a separate CSV export — the trial's in-app detail view was sufficient to read the fields for all 50 addresses, so no export credits were needed for this pass.
+
+1. ~~Export the finalized sample as CSV.~~ Not needed — in-app detail view showed the fields directly.
+2. **Control group:** not run. Coverage-by-county from the gap-fill probe below made this moot — population was 0% in 4 of 9 counties and too weak elsewhere to justify spending more trial budget validating accuracy.
+3. **Gap-fill probe result:** 9/50 (18%) parcels had a non-null bedroom count; 31/50 (62%) came back `MISSING`; 3/50 (6%) failed address match outright (`UNKNOWN_ADDRESS`); the remaining 7/50 were non-target property types (school, farmfield, farm, empty lot, nonresidence ×2, property-not-found). By county: Waukesha 5/6 (83%), Jefferson 2/6 (33%), Rock 1/6, Washington 1/5, Dane/Green/Columbia/Dodge/Walworth 0%. **Waukesha alone accounts for 5 of the 9 populated results** — the majority of any gain from PropStream is concentrated in that one county, and even there the hits are city/village addresses (some condo/unit-style), not the rural 4+ acre profile the campaign targets.
+4. **Join key:** PropStream uses its own internal parcel ID (e.g. `NBC 1161532`, `WAKC1359357`, `292-0515-3141-033`-style for Jefferson), not SCO `PARCELID`. A bulk import would need an address-normalization join like Columbia's, and 3/50 addresses in this sample didn't even resolve inside PropStream itself — a stronger warning sign than Columbia's ~30% unmatched rate, which was a join-arithmetic problem, not a search-failure problem.
 
 ---
 
-### Step 5 — Go/no-go decision criteria
+### Step 5 — Go/no-go decision criteria — **Result: NO-GO (2026-08-01)**
 
-| Signal | Threshold to proceed |
-|---|---|
-| Control-group accuracy | Bedroom count matches cache within ±0 for most records (this is a hard field; even ±1 disagreement across many records signals a stale/bad source) |
-| Gap-fill field population | Majority of sampled parcels have non-null bedrooms — spotty coverage (e.g. only 1–2 of 10 populated) isn't worth a paid tier |
-| Washington County specifically | Since this is the only source that could recover Washington at all, weight this county's result heavily even if other counties are borderline |
-| Join key | Address-only join is acceptable (Columbia precedent exists) but adds ~30% unmatched-rate risk based on that prior experience |
+| Signal | Threshold to proceed | Result |
+|---|---|---|
+| Control-group accuracy | Bedroom count matches cache within ±0 for most records | Not tested — moot given population result below |
+| Gap-fill field population | Majority of sampled parcels have non-null bedrooms | **Failed** — 18% overall (9/50) |
+| Washington County specifically | Weight heavily since it's the only possible source for this county | **Failed** — 1/5 populated, 3/5 failed address match entirely |
+| Join key | Address-only join acceptable, ~30% unmatched risk tolerated | **Marginal-to-failed** — 6% of addresses didn't resolve in PropStream's own search, before any join was even attempted |
+
+**Decision: NO-GO.** The only county PropStream would meaningfully help is Waukesha (83% hit rate, but the majority of the country-wide gap and the addresses recovered), and even there the results look like suburban/city parcels rather than the rural acreage this campaign is built around. Not worth a paid tier. See Tier 4 Dead Ends entry above for the full breakdown.
 
 ---
 
 ### Step 6 — If GO: integration path
+
+Not pursued — see Step 5 result.
 
 1. Purchase one paid month scoped to the real need count from Step 0 (not the full 25,000/month cap, unless the real need actually approaches that).
 2. Export the full target list as CSV.
@@ -779,9 +786,9 @@ PropStream's property detail view (not the CSV export) may show bedrooms/sqft/ye
 
 ---
 
-### Step 7 — If NO-GO: fallback
+### Step 7 — If NO-GO: fallback — **DONE**
 
-Document the specific failure mode (no data / bad accuracy / bad join key) in this file under a new "PropStream" entry in the Tier 4 Dead Ends table, with the same level of detail as the existing Ascent LRS / AssessorData.org entries, so this isn't re-investigated later. Fall back to Tier 3 options (Tyler iasWorld probing, DevNet Wedge, or targeted Playwright scraping) only for the highest-priority remaining gap (Washington County), given how labor-intensive those options are per the existing notes.
+Failure mode documented in the Tier 4 Dead Ends table above (see the `PropStream (2026-08-01 trial)` row). Next step for the highest-priority remaining gap (Washington County) is Tier 3 (Tyler iasWorld probing, DevNet Wedge, or targeted Playwright scraping) if pursued further — none attempted yet given the labor cost noted in those sections.
 
 ---
 
