@@ -333,6 +333,10 @@ const TARGET_COUNTIES = ['DANE','JEFFERSON','WAUKESHA','GREEN','ROCK','WALWORTH'
 const CLASS_COLORS = {'1':'#185FA5','2':'#3B6D11','4':'#BA7517','5':'#993C1D'};
 const DEFAULT_COLOR = '#5F5E5A';
 const HIDDEN_COLOR  = '#7c3aed';
+// Parcel boundary outlines only render once the map is zoomed in this far (roughly
+// block-level scale) — drawing them at wider zooms would mean fetching and rendering
+// far more polygons than are usefully visible.
+const PARCEL_LINES_MIN_ZOOM = 16;
 
 // PROPCLASS may be a compound value ('1,4', '4,5M', ...); pick the color for
 // the first recognized component instead of requiring an exact key match.
@@ -373,6 +377,8 @@ const S = {
   loadedCount:    0,
   currentSort:    { col: 'emv', dir: 'asc' },
   openPopupFid:   null,
+  parcelBoundaryCache: new Map(),  // PARCELID → L.geoJSON layer (all fetched so far, any zoom/pan)
+  boundaryFetchCtrl:   null,       // AbortController for the in-flight boundary fetch
 };
 
 // ── Map setup ──────────────────────────────────────────────────────────────────
@@ -410,8 +416,10 @@ const clusterGroup = L.markerClusterGroup({
   }
 });
 const hiddenGroup = L.layerGroup();
+const parcelBoundaryGroup = L.layerGroup();  // only added to the map at/above PARCEL_LINES_MIN_ZOOM
 map.addLayer(clusterGroup);
 map.addLayer(hiddenGroup);
+map.on('moveend', updateParcelBoundaries);
 
 // ── Initialization ─────────────────────────────────────────────────────────────
 async function initApp() {
@@ -764,6 +772,56 @@ function buildHiddenMarker(feature) {
   m._fid = feature.properties.PARCELID;
   m.on('click', () => onMarkerClick(feature.properties.PARCELID));
   return m;
+}
+
+// ── Parcel boundary outlines ────────────────────────────────────────────────────
+// Shows every parcel's true boundary in the current viewport once zoomed in far
+// enough — independent of the search filters, so it covers all residences in view,
+// not just matched results. Queried by bbox on each moveend (not cached ahead of
+// time: the full 9-county parcel set is far too large to fetch and store up front).
+// Fetched polygons are kept in S.parcelBoundaryCache for the session so re-entering
+// an already-visited area doesn't refetch it.
+async function updateParcelBoundaries() {
+  if (map.getZoom() < PARCEL_LINES_MIN_ZOOM) {
+    if (map.hasLayer(parcelBoundaryGroup)) map.removeLayer(parcelBoundaryGroup);
+    return;
+  }
+  if (!map.hasLayer(parcelBoundaryGroup)) map.addLayer(parcelBoundaryGroup);
+
+  S.boundaryFetchCtrl?.abort();
+  const ctrl = new AbortController();
+  S.boundaryFetchCtrl = ctrl;
+
+  const b = map.getBounds();
+  const geomParam = JSON.stringify({
+    xmin: b.getWest(), ymin: b.getSouth(), xmax: b.getEast(), ymax: b.getNorth(),
+    spatialReference: { wkid: 4326 }
+  });
+  const params = new URLSearchParams({
+    geometry: geomParam, geometryType: 'esriGeometryEnvelope',
+    spatialRel: 'esriSpatialRelIntersects', inSR: '4326',
+    outFields: 'PARCELID', returnGeometry: 'true', outSR: '4326',
+    f: 'geojson', where: '1=1'
+  });
+
+  try {
+    const res  = await fetch(`/parcel-query?${params}`, { signal: ctrl.signal });
+    const data = await res.json();
+    if (ctrl.signal.aborted) return;
+    for (const feature of (data.features || [])) {
+      const pid = feature.properties.PARCELID;
+      if (!pid || S.parcelBoundaryCache.has(pid)) continue;
+      const layer = L.geoJSON(feature, {
+        renderer,
+        interactive: false,
+        style: { color: '#ffffff', weight: 1.5, opacity: 0.9, fill: false },
+      });
+      S.parcelBoundaryCache.set(pid, layer);
+      parcelBoundaryGroup.addLayer(layer);
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') console.warn('[parcel-boundaries]', err.message);
+  }
 }
 
 function buildListItem(feature) {
