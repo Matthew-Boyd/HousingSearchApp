@@ -424,6 +424,15 @@ map.addLayer(clusterGroup);
 map.addLayer(hiddenGroup);
 map.on('moveend', updateParcelBoundaries);
 
+map.on('contextmenu', (e) => {
+  const { lat, lng } = e.latlng;
+  const url = `https://www.google.com/maps/@?api=1&map_action=map&center=${lat},${lng}&zoom=20&basemap=satellite`;
+  L.popup({ closeButton: false, offset: L.point(0, -2) })
+    .setLatLng(e.latlng)
+    .setContent(`<button class="popup-maps" onclick="window.open('${url}', '_blank')">Open in Google Maps (Satellite) ↗</button>`)
+    .openOn(map);
+});
+
 // ── Initialization ─────────────────────────────────────────────────────────────
 async function initApp() {
   buildCountyGrid();
