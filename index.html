@@ -429,9 +429,68 @@ map.on('contextmenu', (e) => {
   const url = `https://www.google.com/maps/@?api=1&map_action=map&center=${lat},${lng}&zoom=20&basemap=satellite`;
   L.popup({ closeButton: false, offset: L.point(0, -2) })
     .setLatLng(e.latlng)
-    .setContent(`<button class="popup-maps" onclick="window.open('${url}', '_blank')">Open in Google Maps (Satellite) ↗</button>`)
+    .setContent(`<div style="display:flex;flex-direction:column;align-items:flex-start;gap:5px">
+      <button class="popup-maps" onclick="window.open('${url}', '_blank')">Open in Google Maps (Satellite) ↗</button>
+      <button class="popup-maps" onclick="openNearestResidenceZillow(${lat}, ${lng}, this)">Open in Zillow (nearest) ↗</button>
+    </div>`)
     .openOn(map);
 });
+
+// Finds the nearest parcel with a structure (IMPVALUE > 0) to an arbitrary map point,
+// ignoring the search filters entirely — used for right-click lookups on parcels that
+// don't pass the current filter set (and so were never fetched into S.featureMap).
+async function findNearestResidence(lat, lng) {
+  const dLat = 0.02; // ~1.4mi north/south
+  const dLng = dLat / Math.cos(lat * Math.PI / 180);
+  const geomParam = JSON.stringify({
+    xmin: lng - dLng, ymin: lat - dLat, xmax: lng + dLng, ymax: lat + dLat,
+    spatialReference: { wkid: 4326 }
+  });
+  const params = new URLSearchParams({
+    where: 'IMPVALUE > 0',
+    geometry: geomParam, geometryType: 'esriGeometryEnvelope',
+    spatialRel: 'esriSpatialRelIntersects', inSR: '4326',
+    outFields: OUT_FIELDS, returnGeometry: 'true', outSR: '4326', f: 'geojson'
+  });
+  const res  = await fetch(`/parcel-query?${params}`);
+  const data = await res.json();
+  if (!data.features || data.features.length === 0) return null;
+
+  const clickPt = turf.point([lng, lat]);
+  let best = null, bestDist = Infinity;
+  for (const f of data.features) {
+    const centroid = (f.properties.LATITUDE && f.properties.LONGITUDE)
+      ? { lat: f.properties.LATITUDE, lng: f.properties.LONGITUDE }
+      : computeCentroid(f.geometry);
+    if (!centroid) continue;
+    const d = turf.distance(clickPt, turf.point([centroid.lng, centroid.lat]), { units: 'miles' });
+    if (d < bestDist) { bestDist = d; best = f.properties; }
+  }
+  return best;
+}
+
+async function openNearestResidenceZillow(lat, lng, btn) {
+  const win  = window.open('', '_blank'); // open synchronously so popup blockers don't catch the async lookup
+  const orig = btn.textContent;
+  btn.textContent = 'Searching…';
+  btn.disabled = true;
+  try {
+    const p = await findNearestResidence(lat, lng);
+    if (!p) {
+      win.close();
+      alert('No residence found within ~1.5 miles of that point.');
+      return;
+    }
+    const q = encodeURIComponent(getAddress(p) + ' WI');
+    win.location.href = `https://www.zillow.com/homes/${q}/`;
+  } catch (err) {
+    win.close();
+    alert('Error searching for nearest residence: ' + err.message);
+  } finally {
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
+}
 
 // ── Initialization ─────────────────────────────────────────────────────────────
 async function initApp() {
