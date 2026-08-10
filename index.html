@@ -23,7 +23,7 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 #left-panel.collapsed{width:0;min-width:0}
 
 #filter-section{
-  height:45%;flex-shrink:0;overflow-y:auto;
+  height:75%;flex-shrink:0;overflow-y:auto;
   padding:10px 12px;
 }
 #panel-resizer{
@@ -255,7 +255,7 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
       <div class="filter-group">
         <label class="checkbox-label">
           <input type="checkbox" id="waterOnly">
-          Water-adjacent only (physical contact)
+          Water-adjacent only (within 300 ft of a lake/river)
         </label>
       </div>
 
@@ -685,6 +685,7 @@ async function startSearch() {
     if (signal.aborted) {
       if (S.parcels.length > 0) {
         map.fitBounds(clusterGroup.getBounds().pad(0.05));
+        applyClientFilters();
         updateResultsCount();
         document.getElementById('results-count').textContent =
           `Cancelled — ${S.parcels.length.toLocaleString()} results loaded`;
@@ -703,6 +704,7 @@ async function startSearch() {
 
     map.fitBounds(clusterGroup.getBounds().pad(0.05));
     hideProgressBar();
+    applyClientFilters();
     updateResultsCount();
 
     const bbox = computeBbox();
@@ -1093,15 +1095,17 @@ async function runFloodWetlandsPass(bbox) {
       returnGeometry: 'true', outSR: '4326', f: 'geojson', where: '1=1'
     });
 
-    const [floodGeoRes, nwiGeoRes] = await Promise.allSettled([
+    const [floodGeoRes, nwiGeoRes, waterGeoRes] = await Promise.allSettled([
       fetch(`/flood-query?${new URLSearchParams({ ...Object.fromEntries(geomBaseParams), outFields: 'FLD_ZONE' })}`).then(r => r.json()),
       fetch(`/wetlands-query?${new URLSearchParams({ ...Object.fromEntries(geomBaseParams), outFields: 'WETLAND_TYPE' })}`).then(r => r.json()),
+      fetch(`/water-query?${new URLSearchParams({ ...Object.fromEntries(geomBaseParams), outFields: 'OBJECTID,GNIS_NAME' })}`).then(r => r.json()),
     ]);
 
     const floodFeatures = floodGeoRes.status === 'fulfilled' ? (floodGeoRes.value.features || []) : [];
     const nwiFeatures   = nwiGeoRes.status   === 'fulfilled' ? (nwiGeoRes.value.features   || []) : [];
+    const waterFeatures = waterGeoRes.status === 'fulfilled' ? (waterGeoRes.value.features || []) : [];
 
-    S.waterFeatures = nwiFeatures; // reuse for water proximity filter
+    S.waterFeatures = waterFeatures;
 
     for (const feature of S.parcels) {
       const fid = feature.properties.PARCELID;
@@ -1259,22 +1263,77 @@ async function fetchWaterFeatures() {
     const res = await fetch(`/water-query?${new URLSearchParams({
       geometry: geomParam, geometryType: 'esriGeometryEnvelope',
       spatialRel: 'esriSpatialRelIntersects', inSR: '4326',
-      returnGeometry: 'true', outSR: '4326', outFields: 'OBJECTID', where: '1=1'
+      returnGeometry: 'true', outSR: '4326', outFields: 'OBJECTID,GNIS_NAME', where: '1=1'
     })}`);
     const data = await res.json();
     S.waterFeatures = data.features || [];
   } catch { S.waterFeatures = []; }
 }
 
+// A parcel centroid is essentially never literally inside a lake polygon (houses aren't
+// built underwater) and can never be "inside" a river/stream (those are zero-width lines),
+// so adjacency is a distance check, not a containment check. WATER_ADJACENT_FT is a small
+// buffer standing in for "touches" — real-world coordinates never exactly touch.
+const WATER_ADJACENT_FT = 300;
+
+// Bounding-box pre-filter (with a threshold-sized buffer) so the expensive turf distance
+// calls only run for water features that could plausibly be close enough to matter —
+// without this, every parcel is compared against every one of thousands of water features.
+function ensureWaterBboxes() {
+  if (!S.waterFeatures) return;
+  const bufDeg = (WATER_ADJACENT_FT / 364000) * 1.5; // rough ft→degree conversion + margin
+  for (const wf of S.waterFeatures) {
+    if (wf._bbox !== undefined) continue;
+    // Unnamed streams/rivers are typically small, unmapped farm creeks and ditches —
+    // technically NHD hydrography, but not what a buyer means by "near water." Lakes/ponds
+    // (Polygon/MultiPolygon) count regardless of name; flowlines only count if GNIS-named.
+    const isLine = wf.geometry && (wf.geometry.type === 'LineString' || wf.geometry.type === 'MultiLineString');
+    if (isLine && !wf.properties?.GNIS_NAME) { wf._bbox = null; continue; }
+    try {
+      const [minX, minY, maxX, maxY] = turf.bbox(wf);
+      wf._bbox = [minX - bufDeg, minY - bufDeg, maxX + bufDeg, maxY + bufDeg];
+    } catch { wf._bbox = null; }
+  }
+}
+
+function waterFeatureDistanceFt(pt, wf) {
+  const g = wf.geometry;
+  if (!g) return Infinity;
+  // turf@6's pointToLineDistance only accepts a single-part LineString — Multi* geometries
+  // (multi-part lakes, rivers with disconnected segments) must be split and compared piece
+  // by piece, otherwise it throws and the feature is silently skipped as a non-match.
+  if (g.type === 'MultiLineString' || g.type === 'MultiPolygon') {
+    let min = Infinity;
+    for (const part of turf.flatten(wf).features) {
+      const d = waterFeatureDistanceFt(pt, part);
+      if (d < min) min = d;
+    }
+    return min;
+  }
+  if (g.type === 'LineString') {
+    return turf.pointToLineDistance(pt, wf, { units: 'feet' });
+  }
+  if (g.type === 'Polygon') {
+    if (turf.booleanPointInPolygon(pt, wf)) return 0;
+    const outline = turf.polygonToLine(wf); // may itself be a MultiLineString if the polygon has holes
+    return waterFeatureDistanceFt(pt, outline);
+  }
+  return Infinity;
+}
+
 function markWaterAdjacent() {
   if (!S.waterFeatures) return;
+  ensureWaterBboxes();
   for (const f of S.parcels) {
     if (!f._centroid) continue;
-    const pt = turf.point([f._centroid.lng, f._centroid.lat]);
+    const { lat, lng } = f._centroid;
+    const pt = turf.point([lng, lat]);
     let adj = false;
     for (const wf of S.waterFeatures) {
-      if (!wf.geometry) continue;
-      try { if (turf.booleanPointInPolygon(pt, wf)) { adj = true; break; } } catch {}
+      if (!wf.geometry || !wf._bbox) continue;
+      const [minX, minY, maxX, maxY] = wf._bbox;
+      if (lng < minX || lng > maxX || lat < minY || lat > maxY) continue;
+      try { if (waterFeatureDistanceFt(pt, wf) <= WATER_ADJACENT_FT) { adj = true; break; } } catch {}
     }
     f._waterAdjacent = adj;
   }
@@ -1288,9 +1347,11 @@ function passesClientFilters(feature) {
 
   if (document.getElementById('absenteeOnly').checked && !isAbsentee(p)) return false;
 
-  if (document.getElementById('waterOnly').checked) {
-    if (feature._waterAdjacent === undefined) return true; // not yet determined — keep visible
-    if (!feature._waterAdjacent) return false;
+  // Fail closed: until adjacency is actually computed (still undefined), the parcel is
+  // excluded rather than shown — otherwise checking this before enrichment finishes would
+  // flash the entire unfiltered result set for a few seconds.
+  if (document.getElementById('waterOnly').checked && feature._waterAdjacent !== true) {
+    return false;
   }
 
   const minDistRaw = parseFloat(document.getElementById('minDist').value);

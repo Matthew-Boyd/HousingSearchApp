@@ -36,9 +36,12 @@ const SCO_URL           = 'https://services3.arcgis.com/n6uYoouQZW75n5WI/arcgis/
 const FEMA_URL          = 'https://services.arcgis.com/2gdL2gxYNFY2TOUb/arcgis/rest/services/FEMA_National_Flood_Hazard_Layer/FeatureServer/0/query';
 const NWI_URL           = 'https://fwspublicservices.wim.usgs.gov/wetlandsmapservice/rest/services/Wetlands/MapServer/0/query';
 const DOR_URL           = 'https://www.revenue.wi.gov/SLFReportscotvc/2025sumagg.xlsx';
-// NHD layer indices may need verification at runtime against the service's layerIds list.
-const NHD_WATERBODY_URL = 'https://services.nationalmap.gov/arcgis/rest/services/nhd/MapServer/8/query';
-const NHD_FLOWLINE_URL  = 'https://services.nationalmap.gov/arcgis/rest/services/nhd/MapServer/6/query';
+// Verified live 2026-08-05: services.nationalmap.gov no longer resolves (dead host,
+// replaced by hydro.nationalmap.gov). Layer 8 was also wrong — it's the HI/PR/VI/Pacific
+// Territories waterbody variant, which returns nothing for Wisconsin. Layer 12 ("Waterbody -
+// Large Scale") is the correct CONUS layer; confirmed against Lake Mendota, Madison WI.
+const NHD_WATERBODY_URL = 'https://hydro.nationalmap.gov/arcgis/rest/services/nhd/MapServer/12/query';
+const NHD_FLOWLINE_URL  = 'https://hydro.nationalmap.gov/arcgis/rest/services/nhd/MapServer/6/query';
 
 // ─── in-memory state ─────────────────────────────────────────────────────────
 // Key: "MUNICIPALITY NAME|COUNTY NAME" (normalized uppercase)
@@ -751,8 +754,6 @@ const COUNTY_SCRAPERS = {
 // Queries USGS NHD for waterbodies and flowlines in the given bbox.
 // Browser passes geometry/geometryType/spatialRel/inSR params; proxy adds outSR/f.
 // Returns a GeoJSON FeatureCollection merging both layers.
-// Note: NHD layer indices 6 (flowlines) and 8 (waterbodies) should be verified
-// against the live service at https://services.nationalmap.gov/arcgis/rest/services/nhd/MapServer
 app.get('/water-query', async (req, res) => {
   try {
     const params = new URLSearchParams(req.query);

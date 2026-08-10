@@ -389,7 +389,7 @@ Individual checkbox per county, all checked by default. A **"Check all / Uncheck
 
 ### Water Proximity
 - Checkbox: **"Water-adjacent parcels only"**
-- When checked: spatial filter — parcel polygon directly touches or intersects a lake, river, or stream polygon (Wisconsin DNR or USGS NHD hydrography). Physical contact only — no distance buffer.
+- When checked: spatial filter — parcel centroid is within 300 ft of a lake, pond, river, or stream (USGS NHD hydrography). A literal zero-buffer "touches" test doesn't work: river/stream features are zero-width lines (a point can never be "inside" one), and a house's parcel centroid is essentially never literally inside a lake polygon — so proximity, not containment, is the test. 300 ft is a stand-in for "touches" that a real-world lot depth can satisfy.
 - Default: unchecked. Intended use: run water-adjacent search first, then uncheck to expand
 
 ### Minimum Distance to Nearest House
