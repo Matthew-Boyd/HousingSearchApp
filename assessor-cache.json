@@ -1045894,5 +1045894,65 @@
     "sqft": 2242,
     "yearBuilt": 1983,
     "cachedAt": 1786072026693
+  },
+  "032-0815-1142-002": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1786663451139
+  },
+  "032-0815-1444-002": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1786663451274
+  },
+  "006-0716-2721-003": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1786663451329
+  },
+  "002-0714-1634-003": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1786663451343
+  },
+  "016-0614-3643-013": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1786663451358
+  },
+  "016-0614-3132-001": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1786663451367
+  },
+  "008-0715-2424-001": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1786663451431
+  },
+  "016-0514-2413-001": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1786663451510
+  },
+  "016-0513-3621-068": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1786663451526
+  },
+  "014-0614-2533-000": {
+    "bedrooms": null,
+    "sqft": null,
+    "yearBuilt": null,
+    "cachedAt": 1786663451541
   }
 }

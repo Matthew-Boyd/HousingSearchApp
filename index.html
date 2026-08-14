@@ -1288,7 +1288,10 @@ function ensureWaterBboxes() {
     // technically NHD hydrography, but not what a buyer means by "near water." Lakes/ponds
     // (Polygon/MultiPolygon) count regardless of name; flowlines only count if GNIS-named.
     const isLine = wf.geometry && (wf.geometry.type === 'LineString' || wf.geometry.type === 'MultiLineString');
-    if (isLine && !wf.properties?.GNIS_NAME) { wf._bbox = null; continue; }
+    // NHD's ArcGIS service returns the GeoJSON property key as lowercase "gnis_name"
+    // (the alias "GNIS_NAME" only applies to non-geojson/Esri JSON responses) — matching
+    // on the uppercase key silently treated every flowline as unnamed.
+    if (isLine && !wf.properties?.gnis_name) { wf._bbox = null; continue; }
     try {
       const [minX, minY, maxX, maxY] = turf.bbox(wf);
       wf._bbox = [minX - bufDeg, minY - bufDeg, maxX + bufDeg, maxY + bufDeg];
