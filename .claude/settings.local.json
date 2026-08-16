@@ -72,7 +72,16 @@
       "WebFetch(domain:www.oreateai.com)",
       "WebFetch(domain:support.regrid.com)",
       "Bash(node _cama_debug.js)",
-      "Bash(python count_gap_parcels.py)"
+      "Bash(python count_gap_parcels.py)",
+      "Bash(python -c \"import requests; print\\('ok'\\)\")",
+      "Bash(python discover_county_guid.py \"Racine\" --cities \"Racine\" \"Burlington\" \"Sturtevant\")",
+      "Bash(python discover_county_guid.py \"Kenosha\" --cities \"Kenosha\" \"Pleasant Prairie\" \"Twin Lakes\")",
+      "Bash(node _tmp_extract_actions.js)",
+      "WebFetch(domain:www.kenoshacounty.org)",
+      "WebFetch(domain:www.racinecounty.gov)",
+      "WebFetch(domain:www.kenoshacountywi.gov)",
+      "WebFetch(domain:pp-kenosha-co-wi-fb.app.landnav.com)",
+      "Bash(python fetch_kenosha_landnav.py --limit 60 --workers 6)"
     ]
   }
 }

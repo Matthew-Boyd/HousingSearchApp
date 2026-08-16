@@ -22,8 +22,8 @@ const assessorCache = new Map();
 // Spatial grid cell size (degrees). 0.05° ≈ 3.5 km lat / 4.3 km lng at 43°N.
 const CELL = 0.05;
 
-// Bounding box enclosing all 9 target counties with a small margin.
-const BLDG_BBOX = { minLat: 42.2, maxLat: 44.0, minLng: -90.3, maxLng: -87.9 };
+// Bounding box enclosing all 11 target counties with a small margin.
+const BLDG_BBOX = { minLat: 42.2, maxLat: 44.0, minLng: -90.3, maxLng: -87.75 };
 
 // Grid populated at startup from buildings.geojson.
 // Key: "rowIndex|colIndex"  Value: [{lat, lng}, …]
@@ -277,7 +277,7 @@ function nearestBuildingM(lat, lng, exclusionM) {
 // ─── Building footprint loader ────────────────────────────────────────────────
 // Reads buildings.geojson (Microsoft USBuildingFootprints Wisconsin file,
 // standard GeoJSON FeatureCollection with one feature per line).
-// Filters to the 9-county bounding box and indexes centroids into buildingGrid.
+// Filters to the 11-county bounding box and indexes centroids into buildingGrid.
 async function loadBuildingFootprints() {
   if (!fs.existsSync(BUILDINGS_FILE)) {
     console.warn('[buildings] buildings.geojson not found — nearest-structure distances disabled');
@@ -748,6 +748,17 @@ const COUNTY_SCRAPERS = {
   WALWORTH:   null,
   COLUMBIA:   null,
   WASHINGTON: null,
+  // RACINE: not in AccurateAssessor. Uses Ascent LRS (ascent.racinecounty.gov) for tax
+  //   data — same dead end as Green/Columbia/Walworth/Washington above. The only
+  //   building-data source found is CAMA Cloud, which covers just 1 of 17 municipalities
+  //   (Village of Wind Point, ~851 parcels) — bulk-fetched once, not worth a live scraper.
+  RACINE:     null,
+  // KENOSHA: not in AccurateAssessor, but the county runs its own public "Catalis /
+  //   LandNav" property inquiry portal (pp-kenosha-co-wi-fb.app.landnav.com, free
+  //   "Guest Sign In") which exposes full CAMA building data — including Bedrooms — for
+  //   every municipality in the county. Best source found in this project; bulk-fetched
+  //   via fetch_kenosha_landnav.py rather than wired up as a live per-parcel scraper.
+  KENOSHA:    null,
 };
 
 // ─── GET /water-query ────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 # Fetching Bedroom, Sqft & Year Built — County-by-County Notes
 
-This document records how building characteristics (bedrooms, sqft, year built) are sourced and cached for each of the 9 target Wisconsin counties. It is intended to explain the implementation so the scripts can be re-run, extended, or debugged without starting from scratch.
+This document records how building characteristics (bedrooms, sqft, year built) are sourced and cached for each of the 11 target Wisconsin counties. It is intended to explain the implementation so the scripts can be re-run, extended, or debugged without starting from scratch.
 
 ---
 
@@ -8,14 +8,14 @@ This document records how building characteristics (bedrooms, sqft, year built) 
 
 Building data is NOT in the Wisconsin SCO statewide parcel layer. It must come from county assessor systems (CAMA — Computer-Assisted Mass Appraisal databases).
 
-**Key discovery:** AccurateAssessor (Prolorem) operates a public Dataverse API that covers 8 of the 9 target counties. This API provides bedrooms, sqft, and year built and is the primary data source for all counties except Washington.
+**Key discovery:** AccurateAssessor (Prolorem) operates a public Dataverse API that covers 8 of the 11 target counties. This API provides bedrooms, sqft, and year built and is the primary data source for those 8 counties. The remaining 3 (Washington, Racine, Kenosha) are not in AccurateAssessor — Washington remains blocked, Racine is filled (thinly) via CAMA Cloud, and Kenosha is filled (comprehensively) via its own county-run "Catalis/LandNav" portal — see their county sections below.
 
 Data is pre-fetched in bulk and stored in `assessor-cache.json`. The server loads this file at startup into an in-memory Map keyed by SCO PARCELID. Per-parcel scraping happens as a fallback for cache misses (rare after the bulk fetch).
 
 **Cache file:** `assessor-cache.json`
 - Key: SCO PARCELID (the `PARCELID` field from the Wisconsin SCO ArcGIS FeatureServer, or `parcelfid` as called in `server.js`)
 - Value: `{ "bedrooms": N, "sqft": N, "yearBuilt": N, "cachedAt": timestamp_ms }`
-- Total entries as of last run: ~168,000
+- Total entries as of last run: ~224,000 (see "Cache Summary After Last Run" at the end of this doc for the per-county breakdown)
 
 ---
 
@@ -66,6 +66,8 @@ Prefer: odata.maxpagesize=500
 |---|---|
 | `fetch_dane_assessor.py` | Dane (AccurateAssessor + City of Madison ArcGIS) |
 | `fetch_other_counties.py` | Green, Dodge, Rock, Walworth, Jefferson, Waukesha, Columbia |
+| `fetch_racine_camacloud.js` | Racine (CAMA Cloud, Village of Wind Point only) |
+| `fetch_kenosha_landnav.py` | Kenosha (county's own Catalis/LandNav portal, full-county) |
 
 To re-run a specific county only: `python fetch_other_counties.py jefferson waukesha`  
 (county names are lowercase, space-separated; omit to run all)
@@ -366,6 +368,69 @@ AssessorData.org: Does not cover Washington County.
 `https://landrecords.washcowisco.gov/LandRecords/PropertyListing/RealEstateTaxParcel/ParcelDetail/{LRSPARID}`  
 The `LRSPARID` is an integer in the GIS `CurrentParcelSearch` layer but requires county staff login to view property details via API.
 
+**Unexplored lead (2026-08-14):** one of Washington's 4 assessor vendors, CATALIS TAX & CAMA Inc, was previously written off ("no public-facing portal found"). That conclusion should be revisited — Kenosha County's public building-data portal (see Kenosha section below) turned out to *also* be run by Catalis, just under a different product name ("LandNav") and a per-county hostname (`pp-kenosha-co-wi-fb.app.landnav.com`; Langlade County uses yet another pattern, `landnav.co.langlade.wi.us`). No Washington-specific hostname has been found — `pp-washington-co-wi-fb.app.landnav.com`, `pp-washingtonco-wi-fb.app.landnav.com`, `landnav.co.washington.wi.us`, and `landnav.washcowisco.gov` were all tried and failed (503 or DNS failure) — but the naming isn't predictable enough to rule it out from a few guesses. Worth asking Washington County directly (or checking their site for a "Property Inquiry" / "Guest Sign In" link) before concluding Catalis has no public portal there.
+
+---
+
+### Racine County
+
+**Status:** Implemented, but thin. **686 of 851 Village of Wind Point parcels cached (81%); 673 have a bedroom count.** That's the entirety of Racine's coverage — 1 of 17 municipalities.
+
+**Not in AccurateAssessor** — confirmed via `discover_county_guid.py "Racine" --cities "Racine" "Burlington" "Sturtevant"`: 0 hits on targeted city filters, and a 40-page/20,000-record broad scan surfaced the same 24-county plateau documented elsewhere in this file, with no Racine GUID among them.
+
+**Tax portal is Ascent LRS** (`ascent.racinecounty.gov`) — same product as Green/Columbia/Walworth/Washington. Not independently re-verified field-by-field here, but there is no reason to expect it differs from those four: tax administration only, no CAMA fields. Treated as the same confirmed dead end.
+
+**Only building-data source found: CAMA Cloud.** Racine is county id `11` in the CAMA Cloud system (`getCounties()` — see the CAMA Cloud technical section under Dane County above), but it only has assessment data loaded for **1 of Racine's 17 municipalities**: Village of Wind Point (muni id `1186`, ~851 assessments as of 2026-08-14).
+
+**Racine CAMA Cloud taxKeyNumber → SCO PARCELID conversion:** strip dashes. E.g. `192-04-23-21-001-000` → `192042321001000`. Verified directly against the SCO ArcGIS layer (exact address match, not just a format guess).
+
+**SCO PARCELID format:** 15-digit numeric, e.g. `192042321001000`.
+
+**Script:** `fetch_racine_camacloud.js` — reuses the `getCountyMunicipalities`/`getCountyMuniAsmts`/asmt-detail-page pattern documented under Dane's CAMA Cloud section, generalized to take a county id.
+
+**Operational notes — two separate bugs found while getting this working:**
+
+1. **Concurrency breaks CAMA Cloud.** The first run used `waitUntil: 'networkidle'` with 4 concurrent Playwright pages, matching how the on-demand Dane scraper navigates. Under sustained concurrent load this failed almost completely (19 of 851 succeeded; the rest hit 30s timeouts) — CAMA Cloud's Next.js app appears to never reach a true network-idle state under concurrency, or something in that range triggers throttling. Fixed with serial navigation (`CONCURRENCY = 1`) and `waitUntil: 'load'` instead of `'networkidle'`.
+2. **The content-ready check has to avoid the page's own boilerplate text.** The asmt detail page shows a client-side-rendered `"Loading..."` placeholder immediately after `load` fires, then hydrates with real data shortly after — so `document.body.innerText` needs a poll/wait, not a read right after navigation. The first attempt at that poll waited for `/Year Built|Assessment Year|not found|Error/i` to appear — but the page's footer disclaimer text ("...or decisions made in reliance on data presented...CCT assumes no liability for **errors**...") is present even during the `"Loading..."` state, so the `/Error/i` alternative matched instantly and the poll resolved before real content loaded (0 matched out of the first ~300 parcels processed on the retry, despite no errors being thrown). Fixed by waiting on `/Assessment Year/i` only — a string that appears exclusively once the real assessment data has rendered.
+
+Both fixes are in the current `fetch_racine_camacloud.js`; also add a 200ms pause between parcels to be polite. If re-implementing bulk CAMA Cloud fetching for Dane's non-AA municipalities in the future, apply the same fixes.
+
+With both fixes applied, the run still hit a handful of scattered 20s navigation timeouts (~7 of 851, all resolved automatically since the run is idempotent and safe to re-run) — CAMA Cloud appears to be a bit flaky under any sustained load, not just concurrent load. The remaining ~165 non-matched parcels are a mix of these timeouts and genuinely vacant/non-residential parcels with no building record. Re-running the script would pick up a few more of the timed-out ones but won't change the fundamental 1-of-17-municipalities ceiling.
+
+**Municipalities NOT covered (16 of 17, no known source):**
+Cities of Burlington, Racine; Towns of Burlington, Dover, Norway, Waterford; Villages of Caledonia, Elmwood Park, Mt Pleasant, North Bay, Raymond, Rochester, Sturtevant, Union Grove, Waterford, Yorkville.
+
+---
+
+### Kenosha County
+
+**Status:** Implemented — by far the best-covered non-AccurateAssessor county in this project. **48,940 of 59,749 addressed parcels cached (82%); 46,125 have a bedroom count (77%).**
+
+**Not in AccurateAssessor** — confirmed the same way as Racine (0 hits on `--cities "Kenosha" "Pleasant Prairie" "Twin Lakes"`, absent from the 24-county broad-scan plateau).
+
+**Key discovery: Kenosha County runs its own public CAMA portal.** Unlike every other county in this project, Kenosha does not route property detail through Ascent LRS (tax-only) or leave it to a private, unreachable assessor vendor. Its "Property Inquiry" portal — built by Catalis under their "LandNav" product line — is a plain, guest-accessible, server-rendered ASP.NET site exposing full CAMA building data (bedrooms, baths, heating, exterior wall, sqft breakdown by area, etc.) for **every municipality in the county**, not just a subset. This was found by web-searching for the county's own property-tax page rather than guessing vendor URLs, and turned out to be a materially better source than AccurateAssessor is for any other county in this project.
+
+**Portal:** `https://pp-kenosha-co-wi-fb.app.landnav.com/`
+
+**Auth:** No account needed. `Guest Sign In` on `/login/` grants full read access — the page's own banner says *"Please use 'Guest Sign In' to search and view tax parcel data."*
+
+**Why this is easy to bulk-fetch (unlike CAMA Cloud):** this is a conventional server-rendered ASP.NET MVC app (jQuery, Bootstrap, standard `__RequestVerificationToken` antiforgery cookies) — not a WAF-protected Next.js SPA. It works with a plain `requests.Session()`; no Playwright/headless-browser session is needed at all.
+
+**Flow (implemented in `fetch_kenosha_landnav.py`):**
+1. `GET /login/` → scrape the `__RequestVerificationToken` hidden input.
+2. `POST /login/GuestLogin` with `{returnUrl: '', __RequestVerificationToken: <token>}` → sets session cookies (`.AspNetCore.Session`, `Catalis Portal`, antiforgery cookie).
+3. `GET /Search/RealEstate/Search` once, to prime the session's search context (not strictly required to have succeeded, but matches real browser behavior).
+4. `POST /Search/RealEstate/Search/Search` with `X-Requested-With: XMLHttpRequest` and body `{TaxYearSearchType: '0', MinTaxYear: '2026', UserDefinedIdSearchType: '0', MinUserDefinedId: <parcel#>}` → JSON response `{"data": {"0": {"PropertyId": <int>, ...}}}`. **Note:** the search endpoint rejects a `MunicipalityCode`-only query with `"Please specify more search criteria in addition to Tax Information."` — a real value in a second category (here, Parcel #) is required. This appears to block bulk "list everything in this municipality" queries; per-parcel search is the only path found.
+5. `GET /Search/RealEstate/Buildings?propertyId=<id>` → full HTML page containing a `<table id="buildingFeaturesTable">` with `Code`/`Value`/`Unit of Measure` rows (`Bedrooms`, `Year Built`, `Total Area`, `Full Baths`, etc.) for the first/default-selected building on the parcel — reliably the primary dwelling when one exists. Parsed with a regex over `<tr><td>id</td><td>label</td><td>value</td><td>unit</td></tr>` rows.
+
+**Kenosha Parcel # is the SCO PARCELID, exactly, no conversion** — verified directly (`45-4-221-011-0101` appears identically in both systems). Format varies by municipality's own tax-key numbering (not a single fixed-width mask — e.g. `01-122-01-176-031` for City of Kenosha vs `60-4-119-132-0400` for Town of Randall), so it cannot be range-searched; each parcel must be looked up by its exact SCO `PARCELID`.
+
+**Scale and runtime:** 59,749 addressed Kenosha parcels (SCO `SITEADRESS IS NOT NULL`; the ~8,750 address-less parcels were skipped as overwhelmingly vacant land, per the same reasoning documented in the PropStream evaluation's Columbia/Green findings below). Two HTTP requests per parcel (search + buildings) — no Playwright needed, so throughput is much higher than CAMA Cloud: **~4/s sustained with 6 worker threads**, full run in **~4 hours**. Resumable via a `kenosha_landnav_checkpoint.jsonl` append-log — re-running the script skips parcels already recorded, so an interrupted run can continue rather than restart.
+
+**Coverage is essentially county-wide** — this is a single source covering all municipalities, not a per-municipality patchwork like every other non-Dane county in this project. The ~10,800 addressed parcels that didn't match are a mix of vacant/agricultural land with no building record, condo/unit sub-parcels, and a small number of outright search misses — not a municipality gap. No "Municipality Coverage Gaps" entry is needed for Kenosha.
+
+**Script:** `fetch_kenosha_landnav.py`. Re-run with `python fetch_kenosha_landnav.py --workers 6` to pick up any parcels missed on the first pass (resumes from the checkpoint file automatically); `--test` runs a 3-parcel smoke test; `--limit N` caps the SCO parcel list for a quick trial run.
+
 ---
 
 ## AccurateAssessor County GUID Reference
@@ -401,6 +466,8 @@ All confirmed Wisconsin county GUIDs in the AccurateAssessor Dataverse system:
 
 Washington County is **not in AccurateAssessor**. Confirmed twice: (1) city-name queries for West Bend, Hartford, Germantown, Slinger, Jackson, Kewaskum returned zero records; (2) a 40-page broad scan (20,000 records) of the full AA dataset surfaced 24 distinct county GUIDs — Washington is absent. The GUID count plateaued for the final ~15 pages, so additional pages are unlikely to reveal it. Washington County has no AA GUID.
 
+Racine and Kenosha counties are also **not in AccurateAssessor**, confirmed the same way (`discover_county_guid.py "Racine" --cities "Racine" "Burlington" "Sturtevant"` and `discover_county_guid.py "Kenosha" --cities "Kenosha" "Pleasant Prairie" "Twin Lakes"` — 0 city-filter hits, and both are absent from the same 24-county broad-scan plateau above). See their county sections above for the sources actually used instead (CAMA Cloud for Racine, the county's own Catalis/LandNav portal for Kenosha).
+
 ---
 
 ## SCO PARCELID Format by County
@@ -418,6 +485,8 @@ The SCO ArcGIS FeatureServer (`https://services3.arcgis.com/n6uYoouQZW75n5WI/arc
 | Waukesha | Alpha-numeric prefix | `SUMT0671061`, `EGLT1844997` |
 | Columbia | 7-digit numeric | `2238842` |
 | Washington | `291 NNNNNNNNNNN` | `291 11190120005` |
+| Racine | 15-digit numeric | `192042321001000` |
+| Kenosha | Dashed, variable segment widths per municipality | `45-4-221-011-0101`, `01-122-01-176-031` |
 
 ---
 
@@ -534,6 +603,23 @@ All 21 municipalities lack bedroom data:
 
 ---
 
+### Racine County
+
+CAMA Cloud covers 1 of 17 municipalities: Village of Wind Point. **16 of 17 municipalities lack bedroom data**, including all 4 rural towns.
+
+**No data:**
+- Towns of Burlington, Dover, Norway, Waterford
+- Cities of Burlington, Racine
+- Villages of Caledonia, Elmwood Park, Mt Pleasant, North Bay, Raymond, Rochester, Sturtevant, Union Grove, Waterford, Yorkville
+
+---
+
+### Kenosha County
+
+Not applicable in the usual per-municipality sense — the county's own Catalis/LandNav portal (see county section above) covers **all 13 municipalities** from one source, at an 82% parcel-match rate. No municipality is structurally excluded the way AccurateAssessor's partial coverage excludes towns in the other 8 counties.
+
+---
+
 ### Coverage Summary
 
 | County | Total municipalities | Have bedroom data | Missing |
@@ -547,8 +633,10 @@ All 21 municipalities lack bedroom data:
 | Waukesha | ~40 | 3 | ~37 incl. 10 of 13 towns |
 | Columbia | 36 | 11 | 25 incl. 15 towns |
 | Washington | 21 | 0 | all 21 |
+| Racine | 17 | 1 (Village of Wind Point only) | 16 incl. all 4 towns |
+| Kenosha | 13 | 13 (single county-wide portal, 82% parcel match) | none structurally excluded |
 
-**Worst gaps for the 4+ acre rural search:** Green, Dodge, Jefferson, and Waukesha counties each have bedroom data for essentially only 1–3 cities; nearly every rural township is missing. Washington County has no source at all.
+**Worst gaps for the 4+ acre rural search:** Green, Dodge, Jefferson, Waukesha, and now Racine counties each have bedroom data for essentially only 1–3 municipalities; nearly every rural township is missing. Washington County has no source at all. Kenosha is the outlier in the other direction — the best-covered county in the whole project, urban or rural.
 
 ---
 
@@ -564,7 +652,11 @@ This section covers candidate approaches to close the coverage gaps documented a
 
 Live on-demand Playwright scraper (`scrapeCamaCloud()` in `server.js`) covers all 26 Dane County municipalities in the CAMA Cloud system. See the CAMA Cloud section under Dane County above for full technical details.
 
-**Remaining limitation:** No batch detail endpoint exists; each parcel requires one Chromium page navigation. Bulk pre-caching (~50,000 parcels) is not currently practical without rate-limiting mitigation. Data is fetched on demand when a user views a parcel.
+**Remaining limitation:** No batch detail endpoint exists; each parcel requires one Chromium page navigation. Bulk pre-caching (~50,000 parcels) is not currently practical without rate-limiting mitigation. Data is fetched on demand when a user views a parcel. **Update (2026-08-14):** bulk pre-caching *was* done for Racine's one CAMA Cloud municipality (~851 parcels, small enough to be practical) — see `fetch_racine_camacloud.js` and the Racine County section above, including the concurrency/`networkidle` pitfall discovered there that would also apply to any future Dane bulk attempt.
+
+#### Kenosha County's own Catalis/LandNav portal — **IMPLEMENTED (2026-08-14)**
+
+The single best building-data source found in this entire project. Kenosha runs a public, guest-accessible "Property Inquiry" portal (Catalis's "LandNav" product) exposing full CAMA data for every municipality in the county — not a WAF-protected SPA like CAMA Cloud, just a plain ASP.NET site that works over a normal `requests.Session()`. Bulk-fetched via `fetch_kenosha_landnav.py`: 48,940 of 59,749 addressed parcels matched (82%), 46,125 with a bedroom count (77%), in about 4 hours at ~4 parcels/sec. See the Kenosha County section above for the full technical writeup. **Worth checking for every other blocked/thin county in this project** — see the "Unexplored lead" note under Washington County above; the same Catalis product may be running under a different hostname for counties currently written off as having no public CAMA portal.
 
 #### Regrid.com
 National parcel data aggregator (~150M parcels). Claims to include CAMA attributes (bedrooms, sqft, year built) where available from county sources.
@@ -659,6 +751,12 @@ For counties where the assessor uses a JS-rendered SPA (CAMA Cloud, Tyler Ascent
 ### Recommended Next Steps
 
 1. **~~CAMA Cloud (Dane County)~~** — **Done.** Implemented as a live on-demand Playwright scraper in `server.js`. Covers all 26 Dane County CAMA Cloud municipalities.
+
+1a. **~~Kenosha County Catalis/LandNav portal~~** — **Done (2026-08-14).** Bulk-fetched via `fetch_kenosha_landnav.py`; 82% parcel match, 77% with a bedroom count, county-wide. See the Kenosha County section above.
+
+1b. **~~Racine County CAMA Cloud~~** — **Done (2026-08-14), but thin.** Only 1 of 17 municipalities has data in CAMA Cloud. Bulk-fetched via `fetch_racine_camacloud.js`. See the Racine County section above.
+
+1c. **Try the Catalis/LandNav pattern for other blocked counties, especially Washington** — Washington's assessor-vendor list already names Catalis, previously written off as "no public-facing portal found." Now that Kenosha's public Catalis portal is confirmed real, it's worth directly asking Washington County (or the other Ascent-only counties) whether a similar guest-accessible portal exists, rather than continuing to guess hostnames.
 
 2. **Regrid trial:** Sign up for the 30-day free trial and test bedroom field population for Green County townships. If fields are populated, Regrid could fill the Green/Dodge/Jefferson gaps without scraping.
 
@@ -804,6 +902,8 @@ Jefferson County:                          8,337 parcels
 Waukesha County:                           8,745 parcels
 Columbia County (address-matched):         6,342 parcels
 Washington County:                             0 parcels (blocked — no public source)
+Racine County (CAMA Cloud, 1 muni):           686 parcels
+Kenosha County (Catalis/LandNav portal):   48,940 parcels
 ─────────────────────────────────────────────────────────
-Total:                                  ~168,100 parcels
+Total:                                    223,958 parcels
 ```

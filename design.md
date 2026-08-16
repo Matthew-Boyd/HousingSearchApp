@@ -118,7 +118,7 @@ When the user clicks Search:
 | Broadband | Critical for remote work; must be checked manually per property |
 
 ### Target Counties
-Dane, Jefferson, Waukesha, Green, Rock, Walworth, Columbia, Dodge, Washington
+Dane, Jefferson, Waukesha, Green, Rock, Walworth, Columbia, Dodge, Washington, Racine, Kenosha
 
 ---
 
