@@ -837,6 +837,43 @@ async function fetchAllFeaturesUpstream(url, baseParams) {
   return all;
 }
 
+// The NWI pond query's WHERE clause joins against NWI_Wetland_Codes (see NWI_POND_WHERE), and
+// that join scales far worse than a plain query as the bbox grows — confirmed live: a
+// 0.1°×0.1° box returns in ~7s, a 0.2°×0.2° box (4x the area) already takes 31s, and a single
+// county-sized bbox never completes inside fetchJSON's 90s timeout (hangs past 100s with no
+// response at all, with or without geometry — it's the join, not the payload). NHD's plain
+// '1=1' queries have no such join and return a full county in ~2s, so only the pond query
+// needs to be split. NWI_TILE_DEG keeps each tile's area well under where the join starts
+// timing out, with margin for denser-than-average pond areas.
+const NWI_TILE_DEG = 0.15;
+
+function tileBbox([minLng, minLat, maxLng, maxLat], tileDeg) {
+  const tiles = [];
+  for (let y = minLat; y < maxLat; y += tileDeg) {
+    for (let x = minLng; x < maxLng; x += tileDeg) {
+      tiles.push([x, y, Math.min(x + tileDeg, maxLng), Math.min(y + tileDeg, maxLat)]);
+    }
+  }
+  return tiles;
+}
+
+// outFields must be table-qualified (Wetlands.WETLAND_TYPE) here — this service 400s on a
+// bare column name once the WHERE clause references the joined NWI_Wetland_Codes table.
+// Ponds that straddle a tile boundary are returned once per tile they intersect, so results
+// are deduped by the geojson feature's `id` (the service's OBJECTID) across tiles.
+async function fetchNwiPondsForBbox(bbox, baseParams) {
+  const seen = new Map();
+  for (const [minLng, minLat, maxLng, maxLat] of tileBbox(bbox, NWI_TILE_DEG)) {
+    const geomParam = JSON.stringify({ xmin: minLng, ymin: minLat, xmax: maxLng, ymax: maxLat, spatialReference: { wkid: 4326 } });
+    // OBJECTID must be requested explicitly — without it, geojson conversion leaves
+    // feature.id undefined for every pond, which previously collapsed every tile's ponds
+    // into a single Map entry keyed by undefined and silently dropped all but the last one.
+    const feats = await fetchAllFeaturesUpstream(NWI_URL, { ...baseParams, geometry: geomParam, outFields: 'Wetlands.OBJECTID,Wetlands.WETLAND_TYPE', where: NWI_POND_WHERE });
+    for (const f of feats) seen.set(f.id, f);
+  }
+  return [...seen.values()];
+}
+
 // Fetches NHD lakes/streams plus NWI-classified open-water ponds (farm ponds too small or
 // recent to be in NHD, e.g. excavated stock ponds) within bbox, merged into one array.
 // NWI_POND_WHERE keeps marsh/swamp/seasonal wetlands out of the merge. The three sources are
@@ -852,9 +889,7 @@ async function fetchOpenWaterFeaturesForBbox(bbox) {
   };
   const waterbody = await fetchAllFeaturesUpstream(NHD_WATERBODY_URL, { ...baseParams, outFields: 'OBJECTID,GNIS_NAME', where: '1=1' });
   const flowline  = await fetchAllFeaturesUpstream(NHD_FLOWLINE_URL,  { ...baseParams, outFields: 'OBJECTID,GNIS_NAME', where: '1=1' });
-  // outFields must be table-qualified (Wetlands.WETLAND_TYPE) here — this service 400s on a
-  // bare column name once the WHERE clause references the joined NWI_Wetland_Codes table.
-  const ponds     = await fetchAllFeaturesUpstream(NWI_URL,           { ...baseParams, outFields: 'Wetlands.WETLAND_TYPE', where: NWI_POND_WHERE });
+  const ponds     = await fetchNwiPondsForBbox(bbox, baseParams);
   return [...waterbody, ...flowline, ...ponds];
 }
 
