@@ -53,6 +53,8 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 /* ── Filter panel ────────────────────────────────────────────────────────── */
 .panel-title{font-size:14px;font-weight:700;margin-bottom:8px;color:#185FA5}
 .filter-group{margin-bottom:10px}
+.filter-row{display:flex;gap:10px}
+.filter-row .filter-group{flex:1;min-width:0}
 .filter-group label:not(.checkbox-label),.filter-group-label{display:block;font-weight:600;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.03em;margin-bottom:3px}
 .filter-group input[type=number],.filter-group select{
   border:1px solid #ccc;border-radius:3px;padding:3px 5px;
@@ -65,8 +67,6 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 .derived{font-size:11px;color:#185FA5;font-weight:600;margin-top:2px}
 .checkbox-label{display:flex;align-items:flex-start;gap:5px;cursor:pointer;font-size:13px;margin-bottom:3px;line-height:1.3}
 .checkbox-label input{margin-top:1px;flex-shrink:0}
-.warn-text{color:#b45309;font-size:11px;display:block;margin-left:20px}
-.agri-label{flex-direction:column;gap:1px}
 .county-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;margin-top:4px}
 .fg-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
 .fg-header label{margin-bottom:0}
@@ -196,15 +196,14 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
         <div class="input-row"><span>$</span><input type="number" id="budget" value="900000" min="0" step="10000"></div>
         <label for="ratio" style="margin-top:5px">
           Assessment ratio
-          <span class="tooltip-icon" title="Pre-filled from Wisconsin DOR data. Each parcel's displayed estimated market value uses its municipality-specific ratio. The filter ceiling = budget × ratio ÷ 100.">?</span>
+          <span class="tooltip-icon" title="Pre-filled from Wisconsin DOR data. Each parcel's displayed estimated market value uses its municipality-specific ratio.
+The filter ceiling = budget × ratio ÷ 100.">?</span>
         </label>
         <div class="input-row">
           <input type="number" id="ratio" value="95" min="1" max="200" step="0.1">
           <span>%</span>
         </div>
         <div class="derived" id="ceiling-display">Filter ceiling: $855,000</div>
-        <label for="minFmv" style="margin-top:5px">Min FMV (optional)</label>
-        <div class="input-row"><span>$</span><input type="number" id="minFmv" placeholder="none" min="0"></div>
       </div>
 
       <!-- Acreage -->
@@ -228,11 +227,13 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
       <!-- Property class -->
       <div class="filter-group">
         <span class="filter-group-label">Property Class</span>
-        <label class="checkbox-label"><input type="checkbox" id="class1" checked> Class 1 – Residential</label>
-        <label class="checkbox-label agri-label">
-          <span style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="class4"> Class 4 – Agricultural</span>
-          <span class="warn-text">⚠ May require agricultural financing — verify with lender</span>
-        </label>
+        <div style="display:flex;gap:14px">
+          <label class="checkbox-label"><input type="checkbox" id="class1" checked> Class 1 – Residential</label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="class4"> Class 4 – Agricultural
+            <span class="tooltip-icon" title="May require agricultural financing — verify with lender">?</span>
+          </label>
+        </div>
       </div>
 
       <!-- Counties -->
@@ -260,21 +261,22 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
         </label>
       </div>
 
-      <!-- Min distance -->
-      <div class="filter-group">
-        <label for="minDist">Min distance to nearest house</label>
-        <div class="input-row">
-          <input type="number" id="minDist" placeholder="none" min="0" step="100" value="600" style="width:80px">
-          <span>ft</span>
+      <!-- Bedrooms + Min distance -->
+      <div class="filter-row">
+        <div class="filter-group" style="flex:0 0 100px">
+          <label for="minBedrooms">Min bedrooms</label>
+          <input type="number" id="minBedrooms" value="3" min="1" style="width:60px">
+          <div style="font-size:10px;color:#999;margin-top:2px" id="bedroomsNote">Applied after county assessor data loads</div>
+        </div>
+
+        <div class="filter-group" style="flex:1">
+          <label for="minDist">Min distance to nearest house</label>
+          <div class="input-row">
+            <input type="number" id="minDist" placeholder="none" min="0" step="100" value="600" style="width:80px">
+            <span>ft</span>
+          </div>
           <span id="distFilterNote" style="font-size:10px;color:#999"></span>
         </div>
-      </div>
-
-      <!-- Bedrooms -->
-      <div class="filter-group">
-        <label for="minBedrooms">Min bedrooms</label>
-        <input type="number" id="minBedrooms" value="3" min="1" style="width:60px">
-        <div style="font-size:10px;color:#999;margin-top:2px" id="bedroomsNote">Applied after county assessor data loads</div>
       </div>
 
       <!-- Hidden controls -->
@@ -745,7 +747,6 @@ function buildWhereClause() {
   const budget   = parseFloat(document.getElementById('budget').value)   || 900000;
   const ratio    = parseFloat(document.getElementById('ratio').value)    || 95;
   const ceiling  = Math.round(budget * ratio / 100);
-  const minFmv   = parseFloat(document.getElementById('minFmv').value);
   const minAcres = parseFloat(document.getElementById('minAcres').value) || 0;
   const maxAcres = parseFloat(document.getElementById('maxAcres').value);
   // GISACRES is null for some Wisconsin counties (e.g., Dane, Green). COALESCE falls through
@@ -753,7 +754,6 @@ function buildWhereClause() {
   const acresExpr = 'COALESCE(GISACRES, ASSDACRES, DEEDACRES)';
 
   const conds = [`ESTFMKVALUE <= ${ceiling}`];
-  if (!isNaN(minFmv) && minFmv > 0) conds.push(`ESTFMKVALUE >= ${minFmv}`);
   if (minAcres > 0)                  conds.push(`${acresExpr} >= ${minAcres}`);
   if (!isNaN(maxAcres))              conds.push(`${acresExpr} <= ${maxAcres}`);
   if (document.getElementById('structureOnly').checked) conds.push('IMPVALUE > 0');
