@@ -8,6 +8,7 @@ const readline = require('readline');
 const ExcelJS  = require('exceljs');
 const fetch    = require('node-fetch');
 const cheerio  = require('cheerio');
+const turf     = require('@turf/turf');
 
 const app  = express();
 const PORT = 3000;
@@ -42,6 +43,20 @@ const DOR_URL           = 'https://www.revenue.wi.gov/SLFReportscotvc/2025sumagg
 // Large Scale") is the correct CONUS layer; confirmed against Lake Mendota, Madison WI.
 const NHD_WATERBODY_URL = 'https://hydro.nationalmap.gov/arcgis/rest/services/nhd/MapServer/12/query';
 const NHD_FLOWLINE_URL  = 'https://hydro.nationalmap.gov/arcgis/rest/services/nhd/MapServer/6/query';
+
+// A parcel centroid is essentially never literally inside a lake polygon (houses aren't built
+// underwater) and can never be "inside" a river/stream (zero-width lines), so adjacency is a
+// distance check, not a containment check. 300 ft is a small buffer standing in for "touches" —
+// real-world coordinates never exactly touch.
+const WATER_ADJACENT_FT = 300;
+
+// Cowardin classes that represent standing open water you could fish or float a small boat on
+// (Unconsolidated Bottom / Aquatic Bed), restricted to regimes that hold water most or all of
+// the year (Permanently/Semipermanently Flooded). Excludes marsh (Emergent), swamp
+// (Forested/Scrub-Shrub), exposed shoreline, and seasonal/intermittent ponds that go dry.
+const NWI_POND_WHERE =
+  "NWI_Wetland_Codes.CLASS_NAME IN ('Unconsolidated Bottom','Aquatic Bed') " +
+  "AND NWI_Wetland_Codes.WATER_REGIME_NAME IN ('Permanently Flooded','Semipermanently Flooded')";
 
 // ─── in-memory state ─────────────────────────────────────────────────────────
 // Key: "MUNICIPALITY NAME|COUNTY NAME" (normalized uppercase)
@@ -785,6 +800,195 @@ app.get('/water-query', async (req, res) => {
   }
 });
 
+// ─── POST /water-adjacency-query ─────────────────────────────────────────────
+// Accepts: { bbox: [minLng,minLat,maxLng,maxLat], parcels: [{parcelfid, lat, lng}, …] }
+// Returns: { results: [{parcelfid, waterAdjacent}, …] }
+//
+// This used to run client-side: ship every NHD lake/stream plus every qualifying NWI pond in
+// the search bbox to the browser as raw GeoJSON, then loop turf distance checks over every
+// parcel there. A single county can have 2,000+ qualifying farm ponds, and shipping + parsing
+// that much geometry then running an unindexed nested loop froze the browser tab for extended
+// stretches. Computing it here instead means the browser gets back a handful of booleans, and
+// the (still O(parcels × water features), just server-side) loop runs against a grid index —
+// same technique as nearestBuildingM/buildingGrid above, just built fresh per-request since
+// water data comes from a live external API rather than a static local file.
+
+// Paginates past the upstream services' maxRecordCount (Wetlands: 1000, NHD: 2000) — a single
+// unpaginated request silently drops features beyond that cap for a county-sized bbox
+// (confirmed: a full-Racine-County pond query hits exceededTransferLimit at exactly 1000
+// features). Pages are fetched BATCH at a time in parallel since each page takes ~40s from
+// these upstream federal/NWI services — sequential paging alone made an 11-county search
+// impractically slow. Capped at 5 rounds (20k features) as a safety valve against a runaway loop.
+// Pages are fetched ONE AT A TIME, not in parallel. Tried 4-way concurrent pagination first;
+// confirmed live that these federal ArcGIS hosts degrade under concurrent load from a single
+// client — a lone sequential page reliably returns in ~44s, but 4 concurrent requests to the
+// SAME host pushed even the first one past a 90s timeout. Page failures are NOT swallowed —
+// a timed-out or errored page throws and propagates up to the /water-adjacency-query handler,
+// which fails the whole request (502) rather than silently substituting [] and turning "we
+// couldn't reach the upstream service" into a wrong "there is no water here" (`false`).
+async function fetchAllFeaturesUpstream(url, baseParams) {
+  const all = [];
+  for (let offset = 0, page = 0; page < 20; page++, offset += 1000) {
+    const params = new URLSearchParams({ ...baseParams, resultRecordCount: '1000', resultOffset: String(offset) });
+    const feats  = (await fetchJSON(`${url}?${params}`)).features || [];
+    all.push(...feats);
+    if (feats.length < 1000) break; // last page — ArcGIS page sizes decrease monotonically to 0
+  }
+  return all;
+}
+
+// Fetches NHD lakes/streams plus NWI-classified open-water ponds (farm ponds too small or
+// recent to be in NHD, e.g. excavated stock ponds) within bbox, merged into one array.
+// NWI_POND_WHERE keeps marsh/swamp/seasonal wetlands out of the merge. The three sources are
+// fetched sequentially too, for the same concurrent-load reason as fetchAllFeaturesUpstream —
+// the NHD waterbody and flowline layers share a host, and hammering it doesn't help.
+async function fetchOpenWaterFeaturesForBbox(bbox) {
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+  const geomParam = JSON.stringify({ xmin: minLng, ymin: minLat, xmax: maxLng, ymax: maxLat, spatialReference: { wkid: 4326 } });
+  const baseParams = {
+    geometry: geomParam, geometryType: 'esriGeometryEnvelope',
+    spatialRel: 'esriSpatialRelIntersects', inSR: '4326',
+    returnGeometry: 'true', outSR: '4326', f: 'geojson',
+  };
+  const waterbody = await fetchAllFeaturesUpstream(NHD_WATERBODY_URL, { ...baseParams, outFields: 'OBJECTID,GNIS_NAME', where: '1=1' });
+  const flowline  = await fetchAllFeaturesUpstream(NHD_FLOWLINE_URL,  { ...baseParams, outFields: 'OBJECTID,GNIS_NAME', where: '1=1' });
+  // outFields must be table-qualified (Wetlands.WETLAND_TYPE) here — this service 400s on a
+  // bare column name once the WHERE clause references the joined NWI_Wetland_Codes table.
+  const ponds     = await fetchAllFeaturesUpstream(NWI_URL,           { ...baseParams, outFields: 'Wetlands.WETLAND_TYPE', where: NWI_POND_WHERE });
+  return [...waterbody, ...flowline, ...ponds];
+}
+
+// Buckets water features into the same CELL-sized grid used by buildingGrid, keyed by every
+// cell each feature's (buffered) bbox overlaps — unlike buildings, water features are lines/
+// polygons that can span many cells, not single points. Unnamed flowlines (unmapped farm
+// creeks/ditches) are dropped here rather than at fetch time, matching the "GNIS-named
+// streams only" rule.
+// NHD lake polygons — especially the Great Lakes, since Racine and Kenosha border Lake
+// Michigan — can carry tens of thousands of shoreline vertices, which makes every downstream
+// turf operation on them (bbox, polygonToLine, booleanPointInPolygon) slow. Confirmed live:
+// a Racine County search's CPU-bound distance-matching phase blocked the whole Node process
+// for minutes, on top of the fetch time. Simplifying once here, well inside the 300ft
+// adjacency threshold (73ft max deviation), collapses vertex count without materially
+// changing which parcels count as adjacent.
+const SIMPLIFY_TOLERANCE_DEG = 0.0002; // ~73 ft at this latitude
+
+function buildWaterGrid(features) {
+  const bufDeg = (WATER_ADJACENT_FT / 364000) * 1.5; // rough ft→degree conversion + margin
+  const grid = new Map(); // "row|col" -> [feature, …]
+  for (let wf of features) {
+    if (!wf.geometry) continue;
+    const isLine = wf.geometry.type === 'LineString' || wf.geometry.type === 'MultiLineString';
+    // NHD's GeoJSON output uses lowercase "gnis_name" (the "GNIS_NAME" alias only applies to
+    // non-geojson/Esri JSON responses) — matching on the uppercase key would silently treat
+    // every flowline as unnamed.
+    if (isLine && !wf.properties?.gnis_name) continue;
+    try { wf = turf.simplify(wf, { tolerance: SIMPLIFY_TOLERANCE_DEG, highQuality: false, mutate: true }); } catch {}
+    let bb;
+    try { bb = turf.bbox(wf); } catch { continue; }
+    const [minX, minY, maxX, maxY] = [bb[0] - bufDeg, bb[1] - bufDeg, bb[2] + bufDeg, bb[3] + bufDeg];
+    wf._bbox = [minX, minY, maxX, maxY];
+    const r0 = Math.floor(minY / CELL), r1 = Math.floor(maxY / CELL);
+    const c0 = Math.floor(minX / CELL), c1 = Math.floor(maxX / CELL);
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        const key = `${r}|${c}`;
+        if (!grid.has(key)) grid.set(key, []);
+        grid.get(key).push(wf);
+      }
+    }
+  }
+  return grid;
+}
+
+function waterFeatureDistanceFt(pt, wf) {
+  const g = wf.geometry;
+  if (!g) return Infinity;
+  // turf@6's pointToLineDistance only accepts a single-part LineString — Multi* geometries
+  // (multi-part lakes, rivers with disconnected segments) must be split and compared piece by
+  // piece, otherwise it throws and the feature is silently skipped as a non-match.
+  if (g.type === 'MultiLineString' || g.type === 'MultiPolygon') {
+    // The same water feature is checked against every nearby parcel — cache the flatten once
+    // per feature (on the feature itself) instead of recomputing it on every call, so each
+    // resulting Polygon part is a stable object that can itself cache _outline below.
+    if (!wf._parts) wf._parts = turf.flatten(wf).features;
+    let min = Infinity;
+    for (const part of wf._parts) {
+      const d = waterFeatureDistanceFt(pt, part);
+      if (d < min) min = d;
+    }
+    return min;
+  }
+  if (g.type === 'LineString') {
+    return turf.pointToLineDistance(pt, wf, { units: 'feet' });
+  }
+  if (g.type === 'Polygon') {
+    if (turf.booleanPointInPolygon(pt, wf)) return 0;
+    // Cached on first use — polygonToLine on a large lake shoreline is expensive, and the same
+    // polygon is checked against every parcel whose grid cell it overlaps.
+    if (!wf._outline) wf._outline = turf.polygonToLine(wf); // may itself be a MultiLineString if the polygon has holes
+    return waterFeatureDistanceFt(pt, wf._outline);
+  }
+  return Infinity;
+}
+
+// Checks the parcel's own grid cell plus its 8 neighbors — a 1-cell buffer is enough since
+// CELL (0.05°, ~3.5km) is vastly larger than WATER_ADJACENT_FT (300ft, ~0.0009°), so a
+// qualifying feature can only ever be one cell away from the parcel's own cell.
+function isWaterAdjacent(grid, lat, lng) {
+  const pt  = turf.point([lng, lat]);
+  const row = Math.floor(lat / CELL), col = Math.floor(lng / CELL);
+  const seen = new Set();
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      for (const wf of (grid.get(`${row + dr}|${col + dc}`) || [])) {
+        if (seen.has(wf)) continue;
+        seen.add(wf);
+        const [minX, minY, maxX, maxY] = wf._bbox;
+        if (lng < minX || lng > maxX || lat < minY || lat > maxY) continue;
+        try { if (waterFeatureDistanceFt(pt, wf) <= WATER_ADJACENT_FT) return true; } catch {}
+      }
+    }
+  }
+  return false;
+}
+
+app.post('/water-adjacency-query', async (req, res) => {
+  try {
+    const { bbox, parcels } = req.body;
+    if (!Array.isArray(bbox) || bbox.length !== 4 || !Array.isArray(parcels)) {
+      return res.status(400).json({ error: 'bbox ([minLng,minLat,maxLng,maxLat]) and parcels required' });
+    }
+    if (parcels.length === 0) return res.json({ results: [] });
+
+    const t0 = Date.now();
+    const features = await fetchOpenWaterFeaturesForBbox(bbox);
+    const t1 = Date.now();
+    const grid = buildWaterGrid(features);
+    const t2 = Date.now();
+
+    // Yielding every YIELD_EVERY parcels lets other requests (a second search, a status check)
+    // interleave during this CPU-bound phase instead of the whole server stalling for its full
+    // duration — confirmed live that an unyielded pass over a large county can block Node's
+    // single event loop, and every other request, for minutes.
+    const YIELD_EVERY = 200;
+    const results = [];
+    for (let i = 0; i < parcels.length; i++) {
+      const p = parcels[i];
+      results.push({
+        parcelfid:     p.parcelfid,
+        waterAdjacent: (p.lat != null && p.lng != null) ? isWaterAdjacent(grid, p.lat, p.lng) : false,
+      });
+      if (i % YIELD_EVERY === YIELD_EVERY - 1) await new Promise(r => setImmediate(r));
+    }
+    const t3 = Date.now();
+    console.log(`[water-adjacency] ${parcels.length} parcels, ${features.length} features — fetch ${t1 - t0}ms, grid ${t2 - t1}ms, match ${t3 - t2}ms`);
+
+    res.json({ results });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // ─── GET /ratio ───────────────────────────────────────────────────────────────
 // Returns average assessment ratio across a list of counties.
 // county param: comma-separated list, e.g. "DANE,JEFFERSON,WAUKESHA"
@@ -827,8 +1031,8 @@ app.delete('/hidden', (req, res) => {
 });
 
 // ─── fetch helpers ────────────────────────────────────────────────────────────
-async function fetchJSON(url) {
-  const res = await fetch(url, { timeout: 90000 });
+async function fetchJSON(url, { timeout = 90000 } = {}) {
+  const res = await fetch(url, { timeout });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`Upstream HTTP ${res.status}: ${body.slice(0, 300)}`);

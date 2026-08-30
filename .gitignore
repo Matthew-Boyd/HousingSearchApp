@@ -2,3 +2,5 @@ node_modules
 buildings.geojson
 .env
 .env.*
+server.log
+server.err

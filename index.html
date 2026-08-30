@@ -373,7 +373,7 @@ const S = {
   assessorStatus: {},          // county → 'loading'|'done'|'error'|'stub'
   neighborDone:   false,
   floodDone:      false,
-  waterFeatures:  null,
+  waterAdjacencyDone: false,
   isSearching:    false,
   totalCount:     null,
   loadedCount:    0,
@@ -1061,6 +1061,7 @@ async function runEnrichmentPasses(bbox) {
   document.getElementById('assessor-status').textContent = 'Enriching: flood/wetlands, neighbor distance, assessor…';
   await Promise.allSettled([
     runFloodWetlandsPass(bbox),
+    runWaterAdjacencyPass(bbox),
     runNeighborPass(),
     runAssessorPass(),
   ]);
@@ -1095,17 +1096,16 @@ async function runFloodWetlandsPass(bbox) {
       returnGeometry: 'true', outSR: '4326', f: 'geojson', where: '1=1'
     });
 
-    const [floodGeoRes, nwiGeoRes, waterGeoRes] = await Promise.allSettled([
+    const [floodGeoRes, nwiGeoRes] = await Promise.allSettled([
       fetch(`/flood-query?${new URLSearchParams({ ...Object.fromEntries(geomBaseParams), outFields: 'FLD_ZONE' })}`).then(r => r.json()),
       fetch(`/wetlands-query?${new URLSearchParams({ ...Object.fromEntries(geomBaseParams), outFields: 'WETLAND_TYPE' })}`).then(r => r.json()),
-      fetch(`/water-query?${new URLSearchParams({ ...Object.fromEntries(geomBaseParams), outFields: 'OBJECTID,GNIS_NAME' })}`).then(r => r.json()),
     ]);
 
     const floodFeatures = floodGeoRes.status === 'fulfilled' ? (floodGeoRes.value.features || []) : [];
-    const nwiFeatures   = nwiGeoRes.status   === 'fulfilled' ? (nwiGeoRes.value.features   || []) : [];
-    const waterFeatures = waterGeoRes.status === 'fulfilled' ? (waterGeoRes.value.features || []) : [];
-
-    S.waterFeatures = waterFeatures;
+    // nwiFeatures drives the display-only "Wetlands" popup field — intentionally unfiltered
+    // (marsh/swamp included), unlike the fishable/floatable pond set the water-adjacent filter
+    // uses (computed server-side now, see runWaterAdjacencyPass).
+    const nwiFeatures   = nwiGeoRes.status === 'fulfilled' ? (nwiGeoRes.value.features || []) : [];
 
     for (const feature of S.parcels) {
       const fid = feature.properties.PARCELID;
@@ -1132,17 +1132,44 @@ async function runFloodWetlandsPass(bbox) {
       patchOpenPopup(fid);
     }
 
-    // If water filter is checked, apply it now that we have water features
-    if (document.getElementById('waterOnly').checked) {
-      markWaterAdjacent();
-      applyClientFilters();
-    }
-
     S.floodDone = true;
     updateResultsCount();
   } catch (err) {
     console.warn('Flood/wetlands pass failed:', err.message);
     S.floodDone = true;
+  }
+}
+
+// Water adjacency (NHD lakes/named streams + NWI fishable/floatable ponds) is computed
+// server-side — see /water-adjacency-query in server.js. A county can have 2,000+ qualifying
+// ponds; shipping that geometry to the browser and looping turf distance checks there used to
+// freeze the tab for extended stretches. The browser now just gets back a parcelfid->bool map.
+async function runWaterAdjacencyPass(bbox) {
+  try {
+    const parcelsForQuery = S.parcels
+      .filter(f => f._centroid)
+      .map(f => ({ parcelfid: f.properties.PARCELID, lat: f._centroid.lat, lng: f._centroid.lng }));
+    if (parcelsForQuery.length === 0) { S.waterAdjacencyDone = true; return; }
+
+    const res  = await fetch('/water-adjacency-query', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ bbox, parcels: parcelsForQuery }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Water adjacency query failed (${res.status})`);
+
+    const adjacentIds = new Set(data.results.filter(r => r.waterAdjacent).map(r => r.parcelfid));
+    for (const feature of S.parcels) {
+      feature._waterAdjacent = adjacentIds.has(feature.properties.PARCELID);
+    }
+
+    S.waterAdjacencyDone = true;
+    if (document.getElementById('waterOnly').checked) applyClientFilters();
+    updateResultsCount();
+  } catch (err) {
+    console.warn('Water adjacency pass failed:', err.message);
+    S.waterAdjacencyDone = true;
   }
 }
 
@@ -1240,106 +1267,12 @@ function updateAssessorStatus() {
 }
 
 // ── Water proximity ────────────────────────────────────────────────────────────
-async function onWaterFilterChange() {
-  if (!document.getElementById('waterOnly').checked) {
-    applyClientFilters();
-    return;
-  }
-  if (!S.waterFeatures) {
-    // Water features fetched during flood pass; if not done yet, wait
-    if (!S.floodDone) { applyClientFilters(); return; }
-    // Fetch independently if flood pass hasn't run yet
-    await fetchWaterFeatures();
-  }
-  markWaterAdjacent();
+// Adjacency itself is computed server-side (see runWaterAdjacencyPass / /water-adjacency-query
+// in server.js) as part of the normal post-search enrichment. Toggling the checkbox just
+// re-applies filters; passesClientFilters() fails closed on feature._waterAdjacent !== true
+// until that pass has landed, so toggling early doesn't flash unfiltered results.
+function onWaterFilterChange() {
   applyClientFilters();
-}
-
-async function fetchWaterFeatures() {
-  try {
-    const bbox = computeBbox();
-    const [minLng, minLat, maxLng, maxLat] = bbox;
-    const geomParam = JSON.stringify({ xmin: minLng, ymin: minLat, xmax: maxLng, ymax: maxLat, spatialReference: { wkid: 4326 } });
-    const res = await fetch(`/water-query?${new URLSearchParams({
-      geometry: geomParam, geometryType: 'esriGeometryEnvelope',
-      spatialRel: 'esriSpatialRelIntersects', inSR: '4326',
-      returnGeometry: 'true', outSR: '4326', outFields: 'OBJECTID,GNIS_NAME', where: '1=1'
-    })}`);
-    const data = await res.json();
-    S.waterFeatures = data.features || [];
-  } catch { S.waterFeatures = []; }
-}
-
-// A parcel centroid is essentially never literally inside a lake polygon (houses aren't
-// built underwater) and can never be "inside" a river/stream (those are zero-width lines),
-// so adjacency is a distance check, not a containment check. WATER_ADJACENT_FT is a small
-// buffer standing in for "touches" — real-world coordinates never exactly touch.
-const WATER_ADJACENT_FT = 300;
-
-// Bounding-box pre-filter (with a threshold-sized buffer) so the expensive turf distance
-// calls only run for water features that could plausibly be close enough to matter —
-// without this, every parcel is compared against every one of thousands of water features.
-function ensureWaterBboxes() {
-  if (!S.waterFeatures) return;
-  const bufDeg = (WATER_ADJACENT_FT / 364000) * 1.5; // rough ft→degree conversion + margin
-  for (const wf of S.waterFeatures) {
-    if (wf._bbox !== undefined) continue;
-    // Unnamed streams/rivers are typically small, unmapped farm creeks and ditches —
-    // technically NHD hydrography, but not what a buyer means by "near water." Lakes/ponds
-    // (Polygon/MultiPolygon) count regardless of name; flowlines only count if GNIS-named.
-    const isLine = wf.geometry && (wf.geometry.type === 'LineString' || wf.geometry.type === 'MultiLineString');
-    // NHD's ArcGIS service returns the GeoJSON property key as lowercase "gnis_name"
-    // (the alias "GNIS_NAME" only applies to non-geojson/Esri JSON responses) — matching
-    // on the uppercase key silently treated every flowline as unnamed.
-    if (isLine && !wf.properties?.gnis_name) { wf._bbox = null; continue; }
-    try {
-      const [minX, minY, maxX, maxY] = turf.bbox(wf);
-      wf._bbox = [minX - bufDeg, minY - bufDeg, maxX + bufDeg, maxY + bufDeg];
-    } catch { wf._bbox = null; }
-  }
-}
-
-function waterFeatureDistanceFt(pt, wf) {
-  const g = wf.geometry;
-  if (!g) return Infinity;
-  // turf@6's pointToLineDistance only accepts a single-part LineString — Multi* geometries
-  // (multi-part lakes, rivers with disconnected segments) must be split and compared piece
-  // by piece, otherwise it throws and the feature is silently skipped as a non-match.
-  if (g.type === 'MultiLineString' || g.type === 'MultiPolygon') {
-    let min = Infinity;
-    for (const part of turf.flatten(wf).features) {
-      const d = waterFeatureDistanceFt(pt, part);
-      if (d < min) min = d;
-    }
-    return min;
-  }
-  if (g.type === 'LineString') {
-    return turf.pointToLineDistance(pt, wf, { units: 'feet' });
-  }
-  if (g.type === 'Polygon') {
-    if (turf.booleanPointInPolygon(pt, wf)) return 0;
-    const outline = turf.polygonToLine(wf); // may itself be a MultiLineString if the polygon has holes
-    return waterFeatureDistanceFt(pt, outline);
-  }
-  return Infinity;
-}
-
-function markWaterAdjacent() {
-  if (!S.waterFeatures) return;
-  ensureWaterBboxes();
-  for (const f of S.parcels) {
-    if (!f._centroid) continue;
-    const { lat, lng } = f._centroid;
-    const pt = turf.point([lng, lat]);
-    let adj = false;
-    for (const wf of S.waterFeatures) {
-      if (!wf.geometry || !wf._bbox) continue;
-      const [minX, minY, maxX, maxY] = wf._bbox;
-      if (lng < minX || lng > maxX || lat < minY || lat > maxY) continue;
-      try { if (waterFeatureDistanceFt(pt, wf) <= WATER_ADJACENT_FT) { adj = true; break; } } catch {}
-    }
-    f._waterAdjacent = adj;
-  }
 }
 
 // ── Client-side filtering ──────────────────────────────────────────────────────
@@ -1633,7 +1566,7 @@ function clearResults() {
   S.assessorStatus = {};
   S.neighborDone   = false;
   S.floodDone      = false;
-  S.waterFeatures  = null;
+  S.waterAdjacencyDone = false;
   S.totalCount     = null;
   S.loadedCount    = 0;
   S.openPopupFid   = null;

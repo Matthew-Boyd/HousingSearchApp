@@ -1,3 +1,8 @@
-[hidden] Loaded 0 hidden parcels
+[hidden] Loaded 1 hidden parcels
+[assessor] Cache loaded: 223958 parcels
+[buildings] Loading building footprints…
 [DOR] Loaded 1658 municipality ratios
+[buildings] Loaded 1,532,151 buildings in 1536 grid cells
 Wisconsin Parcel Search → http://localhost:3000
+[water-adjacency] 1 parcels, 4307 features — fetch 269583ms, grid 325ms, match 4ms
+[assessor:RACINE] 3105 parcels requested
