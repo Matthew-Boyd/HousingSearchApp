@@ -110,6 +110,7 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
 .ast-done{color:#166534}
 .ast-error{color:#991b1b}
 .ast-stub{color:#999}
+.ast-cached{color:#2563eb}
 
 /* ── Results table ───────────────────────────────────────────────────────── */
 #results-table{width:100%;border-collapse:collapse}
@@ -296,6 +297,7 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
           <span class="rh-count" id="results-count">No results</span>
           <button class="rh-btn" id="exportBtn">Export CSV</button>
         </div>
+        <div class="assessor-status" id="water-status"></div>
         <div class="assessor-status" id="assessor-status"></div>
       </div>
       <div id="results-list">
@@ -371,6 +373,7 @@ const S = {
   dorRatios:      {},          // "MUNI|COUNTY" → ratio number
   defaultRatio:   95,
   assessorStatus: {},          // county → 'loading'|'done'|'error'|'stub'
+  waterStatus:    {},          // county → 'fetching'|'cached'|'done'|'error'
   neighborDone:   false,
   floodDone:      false,
   waterAdjacencyDone: false,
@@ -1170,6 +1173,20 @@ async function runWaterAdjacencyPass() {
       .map(f => ({ parcelfid: f.properties.PARCELID, lat: f._centroid.lat, lng: f._centroid.lng, county: f.properties.CONAME }));
     if (parcelsForQuery.length === 0) { S.waterAdjacencyDone = true; return; }
 
+    const counties = [...new Set(parcelsForQuery.map(p => p.county).filter(Boolean))];
+
+    // Cheap pre-check so the status line can say "fetching from source" (can take minutes for
+    // a Great-Lakes county) vs. "from cache" (near-instant) BEFORE the slow request starts —
+    // otherwise there's no indication anything is happening while a first-time county fetches.
+    try {
+      const statusRes  = await fetch(`/water-cache-status?${new URLSearchParams({ counties: counties.join(',') })}`);
+      const statusData = await statusRes.json();
+      for (const c of counties) S.waterStatus[c] = statusData.status?.[c] ? 'cached' : 'fetching';
+    } catch {
+      for (const c of counties) S.waterStatus[c] = 'fetching';
+    }
+    updateWaterStatus();
+
     const res  = await fetch('/water-adjacency-query', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1183,13 +1200,28 @@ async function runWaterAdjacencyPass() {
       feature._waterAdjacent = adjacentIds.has(feature.properties.PARCELID);
     }
 
+    for (const c of counties) S.waterStatus[c] = 'done';
+    updateWaterStatus();
+
     S.waterAdjacencyDone = true;
     if (document.getElementById('waterOnly').checked) applyClientFilters();
     updateResultsCount();
   } catch (err) {
     console.warn('Water adjacency pass failed:', err.message);
+    for (const c in S.waterStatus) if (S.waterStatus[c] !== 'done') S.waterStatus[c] = 'error';
+    updateWaterStatus();
     S.waterAdjacencyDone = true;
   }
+}
+
+function updateWaterStatus() {
+  const el    = document.getElementById('water-status');
+  const parts = Object.entries(S.waterStatus).map(([c, st]) => {
+    const cls  = st === 'done' ? 'ast-done' : st === 'cached' ? 'ast-cached' : st === 'fetching' ? 'ast-loading' : 'ast-error';
+    const text = st === 'done' ? 'water ✓' : st === 'cached' ? 'water: loading from cache…' : st === 'fetching' ? 'water: fetching from source…' : 'water ✗';
+    return `<span class="${cls}">${titleCase(c)} ${text}</span>`;
+  });
+  el.innerHTML = parts.join('');
 }
 
 async function runNeighborPass() {
@@ -1575,6 +1607,7 @@ function clearResults() {
   hiddenGroup.clearLayers();
   document.getElementById('results-tbody').innerHTML = '';
   document.getElementById('assessor-status').textContent = '';
+  document.getElementById('water-status').textContent = '';
   S.parcels        = [];
   S.featureMap     = new Map();
   S.enrichment     = new Map();
@@ -1583,6 +1616,7 @@ function clearResults() {
   S.hiddenMarkers  = new Map();
   S.listItems      = new Map();
   S.assessorStatus = {};
+  S.waterStatus    = {};
   S.neighborDone   = false;
   S.floodDone      = false;
   S.waterAdjacencyDone = false;

@@ -1072,6 +1072,18 @@ async function getWaterFeaturesForCounty(county) {
   }
 }
 
+// ─── GET /water-cache-status ──────────────────────────────────────────────────
+// Cheap pre-check so the browser can show "fetching from source" (can take minutes for a
+// Great-Lakes county) vs. "from cache" (near-instant) BEFORE kicking off the slow
+// /water-adjacency-query request — otherwise there's no indication of what's happening during
+// a long first-time county fetch.
+app.get('/water-cache-status', (req, res) => {
+  const counties = (req.query.counties || '').split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
+  const status = {};
+  for (const c of counties) status[c] = waterFeatureCache.has(c);
+  res.json({ status });
+});
+
 app.post('/water-adjacency-query', async (req, res) => {
   try {
     const { parcels } = req.body;
