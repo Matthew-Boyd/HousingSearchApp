@@ -16,9 +16,15 @@ const PORT = 3000;
 const HIDDEN_FILE    = path.join(__dirname, 'hidden.json');
 const BUILDINGS_FILE = path.join(__dirname, 'buildings.geojson');
 const ASSESSOR_CACHE_FILE = path.join(__dirname, 'assessor-cache.json');
+const WATER_CACHE_FILE    = path.join(__dirname, 'water-cache.json');
 
 // In-memory assessor cache. Key: PARCELID. Value: { bedrooms, sqft, yearBuilt, cachedAt }
 const assessorCache = new Map();
+
+// In-memory water-feature cache. Key: county name (e.g. "DANE"). Value:
+// { features: [...GeoJSON features], cachedAt }. Populated lazily by getWaterFeaturesForCounty
+// — see the water-adjacency section below.
+const waterFeatureCache = new Map();
 
 // Spatial grid cell size (degrees). 0.05° ≈ 3.5 km lat / 4.3 km lng at 43°N.
 const CELL = 0.05;
@@ -175,6 +181,33 @@ function scheduleAssessorCacheSave() {
       fs.writeFileSync(ASSESSOR_CACHE_FILE, JSON.stringify(obj, null, 2), 'utf8');
     } catch (err) {
       console.warn(`[assessor] Cache save failed: ${err.message}`);
+    }
+  }, 5000);
+}
+
+// ─── Water-feature cache ──────────────────────────────────────────────────────
+function loadWaterCache() {
+  try {
+    if (!fs.existsSync(WATER_CACHE_FILE)) return;
+    const obj = JSON.parse(fs.readFileSync(WATER_CACHE_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(obj)) waterFeatureCache.set(k, v);
+    console.log(`[water] Cache loaded: ${waterFeatureCache.size} counties`);
+  } catch (err) {
+    console.warn(`[water] Cache load failed: ${err.message}`);
+  }
+}
+
+let waterCacheSaveTimer = null;
+function scheduleWaterCacheSave() {
+  // Debounce: write at most once per 5 s in case several counties fetch in close succession.
+  if (waterCacheSaveTimer) return;
+  waterCacheSaveTimer = setTimeout(() => {
+    waterCacheSaveTimer = null;
+    try {
+      const obj = Object.fromEntries(waterFeatureCache);
+      fs.writeFileSync(WATER_CACHE_FILE, JSON.stringify(obj), 'utf8');
+    } catch (err) {
+      console.warn(`[water] Cache save failed: ${err.message}`);
     }
   }, 5000);
 }
@@ -801,8 +834,10 @@ app.get('/water-query', async (req, res) => {
 });
 
 // ─── POST /water-adjacency-query ─────────────────────────────────────────────
-// Accepts: { bbox: [minLng,minLat,maxLng,maxLat], parcels: [{parcelfid, lat, lng}, …] }
+// Accepts: { parcels: [{parcelfid, lat, lng, county}, …] }
 // Returns: { results: [{parcelfid, waterAdjacent}, …] }
+// Water features are fetched and cached per `county` (see getWaterFeaturesForCounty below),
+// not per search bbox.
 //
 // This used to run client-side: ship every NHD lake/stream plus every qualifying NWI pond in
 // the search bbox to the browser as raw GeoJSON, then loop turf distance checks over every
@@ -987,16 +1022,72 @@ function isWaterAdjacent(grid, lat, lng) {
   return false;
 }
 
+// Water features are cached per county rather than per search bbox — the first
+// water-adjacency request touching a county pays for the full NHD/NWI fetch (minutes for a
+// Lake-Michigan county like Racine/Kenosha), and every later request for that county, from any
+// map viewport or search, is served straight from waterFeatureCache. The county's extent is
+// queried live from the same Statewide Parcels service used for parcel search (SCO_URL) rather
+// than hardcoded, so it can't silently drift from the actual parcel data.
+//
+// Padded by ~1 mile: a one-time per-county fetch can afford a generous margin so a water body
+// just across the county line still counts for a parcel near the border (WATER_ADJACENT_FT
+// itself is only 300 ft).
+const COUNTY_EXTENT_PAD_DEG = 0.02;
+
+async function fetchCountyExtent(county) {
+  const params = new URLSearchParams({ where: `CONAME='${county}'`, returnExtentOnly: 'true', outSR: '4326', f: 'json' });
+  const data = await fetchJSON(`${SCO_URL}?${params}`);
+  const ext  = data.extent;
+  if (!ext || ext.xmin == null) throw new Error(`No parcel extent for county: ${county}`);
+  return [ext.xmin - COUNTY_EXTENT_PAD_DEG, ext.ymin - COUNTY_EXTENT_PAD_DEG,
+          ext.xmax + COUNTY_EXTENT_PAD_DEG, ext.ymax + COUNTY_EXTENT_PAD_DEG];
+}
+
+// Guards against two concurrent water-adjacency requests for a brand-new county both paying
+// for the full fetch — the second request just awaits the first's in-flight promise.
+const waterFetchInFlight = new Map();
+
+async function getWaterFeaturesForCounty(county) {
+  const cached = waterFeatureCache.get(county);
+  if (cached) {
+    console.log(`[water:${county}] Loading water data from cache (${cached.features.length} features)`);
+    return cached.features;
+  }
+  if (waterFetchInFlight.has(county)) return waterFetchInFlight.get(county);
+
+  const promise = (async () => {
+    console.log(`[water:${county}] Not cached — fetching water data from NHD/NWI…`);
+    const bbox     = await fetchCountyExtent(county);
+    const features = await fetchOpenWaterFeaturesForBbox(bbox);
+    waterFeatureCache.set(county, { features, cachedAt: Date.now() });
+    console.log(`[water:${county}] Saving water data to cache (${features.length} features)`);
+    scheduleWaterCacheSave();
+    return features;
+  })();
+  waterFetchInFlight.set(county, promise);
+  try {
+    return await promise;
+  } finally {
+    waterFetchInFlight.delete(county);
+  }
+}
+
 app.post('/water-adjacency-query', async (req, res) => {
   try {
-    const { bbox, parcels } = req.body;
-    if (!Array.isArray(bbox) || bbox.length !== 4 || !Array.isArray(parcels)) {
-      return res.status(400).json({ error: 'bbox ([minLng,minLat,maxLng,maxLat]) and parcels required' });
+    const { parcels } = req.body;
+    if (!Array.isArray(parcels)) {
+      return res.status(400).json({ error: 'parcels required' });
     }
     if (parcels.length === 0) return res.json({ results: [] });
 
+    const counties = [...new Set(parcels.map(p => (p.county || '').toUpperCase()).filter(Boolean))];
+    if (counties.length === 0) {
+      return res.json({ results: parcels.map(p => ({ parcelfid: p.parcelfid, waterAdjacent: false })) });
+    }
+
     const t0 = Date.now();
-    const features = await fetchOpenWaterFeaturesForBbox(bbox);
+    const featureLists = await Promise.all(counties.map(c => getWaterFeaturesForCounty(c)));
+    const features = featureLists.flat();
     const t1 = Date.now();
     const grid = buildWaterGrid(features);
     const t2 = Date.now();
@@ -1016,7 +1107,7 @@ app.post('/water-adjacency-query', async (req, res) => {
       if (i % YIELD_EVERY === YIELD_EVERY - 1) await new Promise(r => setImmediate(r));
     }
     const t3 = Date.now();
-    console.log(`[water-adjacency] ${parcels.length} parcels, ${features.length} features — fetch ${t1 - t0}ms, grid ${t2 - t1}ms, match ${t3 - t2}ms`);
+    console.log(`[water-adjacency] ${parcels.length} parcels, ${counties.length} counties, ${features.length} features — fetch ${t1 - t0}ms, grid ${t2 - t1}ms, match ${t3 - t2}ms`);
 
     res.json({ results });
   } catch (err) {
@@ -1116,6 +1207,7 @@ async function runConcurrently(tasks, limit) {
 async function start() {
   initHiddenFile();
   loadAssessorCache();
+  loadWaterCache();
   await Promise.all([loadDorRatios(), loadBuildingFootprints()]);
   app.listen(PORT, () => {
     console.log(`Wisconsin Parcel Search → http://localhost:${PORT}`);

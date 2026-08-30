@@ -1076,7 +1076,7 @@ async function runEnrichmentPasses(bbox) {
   document.getElementById('assessor-status').textContent = 'Enriching: flood/wetlands, neighbor distance, assessor…';
   await Promise.allSettled([
     runFloodWetlandsPass(bbox),
-    runWaterAdjacencyPass(bbox),
+    runWaterAdjacencyPass(),
     runNeighborPass(),
     runAssessorPass(),
   ]);
@@ -1159,17 +1159,21 @@ async function runFloodWetlandsPass(bbox) {
 // server-side — see /water-adjacency-query in server.js. A county can have 2,000+ qualifying
 // ponds; shipping that geometry to the browser and looping turf distance checks there used to
 // freeze the tab for extended stretches. The browser now just gets back a parcelfid->bool map.
-async function runWaterAdjacencyPass(bbox) {
+// Water features are fetched and cached server-side per county (keyed off each parcel's
+// CONAME below), not per search bbox, so panning/zooming or re-searching within an
+// already-seen county is served from cache instead of re-hitting the slow upstream NHD/NWI
+// services.
+async function runWaterAdjacencyPass() {
   try {
     const parcelsForQuery = S.parcels
       .filter(f => f._centroid)
-      .map(f => ({ parcelfid: f.properties.PARCELID, lat: f._centroid.lat, lng: f._centroid.lng }));
+      .map(f => ({ parcelfid: f.properties.PARCELID, lat: f._centroid.lat, lng: f._centroid.lng, county: f.properties.CONAME }));
     if (parcelsForQuery.length === 0) { S.waterAdjacencyDone = true; return; }
 
     const res  = await fetch('/water-adjacency-query', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ bbox, parcels: parcelsForQuery }),
+      body:    JSON.stringify({ parcels: parcelsForQuery }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `Water adjacency query failed (${res.status})`);
