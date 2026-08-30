@@ -239,7 +239,7 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
       <div class="filter-group">
         <div class="fg-header">
           <span class="filter-group-label">Counties</span>
-          <button class="link-btn" id="countyToggleBtn">Uncheck all</button>
+          <button class="link-btn" id="countyToggleBtn">Check all</button>
         </div>
         <div class="county-grid" id="county-grid"></div>
       </div>
@@ -264,8 +264,8 @@ html,body{height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-s
       <div class="filter-group">
         <label for="minDist">Min distance to nearest house</label>
         <div class="input-row">
-          <input type="number" id="minDist" placeholder="none" min="0" value="600" style="width:80px">
-          <select id="distUnit"><option value="ft">ft</option><option value="mi">mi</option></select>
+          <input type="number" id="minDist" placeholder="none" min="0" step="100" value="600" style="width:80px">
+          <span>ft</span>
           <span id="distFilterNote" style="font-size:10px;color:#999"></span>
         </div>
       </div>
@@ -536,7 +536,7 @@ function buildCountyGrid() {
   for (const c of TARGET_COUNTIES) {
     const lbl = document.createElement('label');
     lbl.className = 'checkbox-label';
-    lbl.innerHTML = `<input type="checkbox" class="county-cb" value="${c}" checked> ${titleCase(c)}`;
+    lbl.innerHTML = `<input type="checkbox" class="county-cb" value="${c}"> ${titleCase(c)}`;
     grid.appendChild(lbl);
     lbl.querySelector('input').addEventListener('change', updateRatioFromCounties);
   }
@@ -552,7 +552,6 @@ function setupEventListeners() {
   document.getElementById('waterOnly').addEventListener('change', onWaterFilterChange);
   document.getElementById('absenteeOnly').addEventListener('change', applyClientFilters);
   document.getElementById('minDist').addEventListener('input', applyClientFilters);
-  document.getElementById('distUnit').addEventListener('change', applyClientFilters);
   document.getElementById('minBedrooms').addEventListener('input', applyClientFilters);
 
   document.getElementById('countyToggleBtn').addEventListener('click', () => {
@@ -1343,9 +1342,7 @@ function passesClientFilters(feature) {
 
   const minDistRaw = parseFloat(document.getElementById('minDist').value);
   if (!isNaN(minDistRaw) && minDistRaw > 0 && S.neighborDone) {
-    const unit = document.getElementById('distUnit').value;
-    const minFt = unit === 'mi' ? minDistRaw * 5280 : minDistRaw;
-    if (e.nearestDistanceFt != null && e.nearestDistanceFt < minFt) return false;
+    if (e.nearestDistanceFt != null && e.nearestDistanceFt < minDistRaw) return false;
   }
 
   const minBr = parseInt(document.getElementById('minBedrooms').value, 10);
