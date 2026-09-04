@@ -259,6 +259,12 @@ The filter ceiling = budget × ratio ÷ 100.">?</span>
           <input type="checkbox" id="waterOnly">
           Water-adjacent only (within 300 ft of a lake/river)
         </label>
+        <div class="input-row" style="margin-top:6px">
+          <label for="minWaterAcres" style="font-size:12px">Min. water area</label>
+          <input type="number" id="minWaterAcres" value="1" min="0" step="0.5" style="width:70px">
+          <span>ac</span>
+        </div>
+        <span style="font-size:10px;color:#999">Ponds/lakes smaller than this don't count (rivers/streams always count)</span>
       </div>
 
       <!-- Bedrooms + Min distance -->
@@ -379,6 +385,7 @@ const S = {
   neighborDone:   false,
   floodDone:      false,
   waterAdjacencyDone: false,
+  waterAdjacencyReqId: 0,   // bumped on every runWaterAdjacencyPass() call so a stale in-flight response can't overwrite a newer one
   isSearching:    false,
   totalCount:     null,
   loadedCount:    0,
@@ -552,6 +559,16 @@ function setupEventListeners() {
   document.getElementById('clearHiddenBtn').addEventListener('click', clearAllHidden);
   document.getElementById('showHidden').addEventListener('change', onShowHiddenToggle);
   document.getElementById('waterOnly').addEventListener('change', onWaterFilterChange);
+  // 'input' (not 'change') so typing a value re-runs the pass without needing to blur the
+  // field first — debounced so it fires once after typing pauses rather than per keystroke,
+  // since (unlike the other client-only filters) this one triggers a server round trip.
+  let minWaterAcresDebounce = null;
+  document.getElementById('minWaterAcres').addEventListener('input', () => {
+    clearTimeout(minWaterAcresDebounce);
+    minWaterAcresDebounce = setTimeout(() => {
+      if (S.parcels.length > 0) runWaterAdjacencyPass();
+    }, 500);
+  });
   document.getElementById('absenteeOnly').addEventListener('change', applyClientFilters);
   document.getElementById('minDist').addEventListener('input', applyClientFilters);
   document.getElementById('minBedrooms').addEventListener('input', applyClientFilters);
@@ -1166,6 +1183,10 @@ async function runFloodWetlandsPass(bbox) {
 // already-seen county is served from cache instead of re-hitting the slow upstream NHD/NWI
 // services.
 async function runWaterAdjacencyPass() {
+  // Also re-triggered when the Min. water area filter changes (see setupEventListeners), which
+  // can fire again before an earlier call's request lands — this token lets a superseded
+  // response bail out instead of overwriting the results of a newer one.
+  const reqId = ++S.waterAdjacencyReqId;
   try {
     const parcelsForQuery = S.parcels
       .filter(f => f._centroid)
@@ -1184,15 +1205,19 @@ async function runWaterAdjacencyPass() {
     } catch {
       for (const c of counties) S.waterStatus[c] = 'fetching';
     }
+    if (reqId !== S.waterAdjacencyReqId) return;
     updateWaterStatus();
 
+    const minAcresRaw = parseFloat(document.getElementById('minWaterAcres').value);
+    const minAcres     = Number.isFinite(minAcresRaw) && minAcresRaw > 0 ? minAcresRaw : 0;
     const res  = await fetch('/water-adjacency-query', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ parcels: parcelsForQuery }),
+      body:    JSON.stringify({ parcels: parcelsForQuery, minAcres }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `Water adjacency query failed (${res.status})`);
+    if (reqId !== S.waterAdjacencyReqId) return;
 
     const adjacentIds = new Set(data.results.filter(r => r.waterAdjacent).map(r => r.parcelfid));
     for (const feature of S.parcels) {
@@ -1206,6 +1231,7 @@ async function runWaterAdjacencyPass() {
     if (document.getElementById('waterOnly').checked) applyClientFilters();
     updateResultsCount();
   } catch (err) {
+    if (reqId !== S.waterAdjacencyReqId) return;
     console.warn('Water adjacency pass failed:', err.message);
     for (const c in S.waterStatus) if (S.waterStatus[c] !== 'done') S.waterStatus[c] = 'error';
     updateWaterStatus();

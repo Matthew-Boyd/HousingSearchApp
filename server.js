@@ -64,6 +64,9 @@ const NWI_POND_WHERE =
   "NWI_Wetland_Codes.CLASS_NAME IN ('Unconsolidated Bottom','Aquatic Bed') " +
   "AND NWI_Wetland_Codes.WATER_REGIME_NAME IN ('Permanently Flooded','Semipermanently Flooded')";
 
+// 1 km² = 247.10538 acres.
+const SQKM_TO_ACRES = 247.10538;
+
 // ─── in-memory state ─────────────────────────────────────────────────────────
 // Key: "MUNICIPALITY NAME|COUNTY NAME" (normalized uppercase)
 // Value: assessment ratio (e.g. 88.3 means 88.3%)
@@ -186,11 +189,23 @@ function scheduleAssessorCacheSave() {
 }
 
 // ─── Water-feature cache ──────────────────────────────────────────────────────
+// Bump whenever the shape of a cached feature changes (e.g. v2 added `_acres`) — an old-schema
+// cache on disk is silently ignored rather than loaded, so stale entries missing the new data
+// get refetched instead of masquerading as complete.
+const WATER_CACHE_VERSION = 2;
+
 function loadWaterCache() {
   try {
     if (!fs.existsSync(WATER_CACHE_FILE)) return;
     const obj = JSON.parse(fs.readFileSync(WATER_CACHE_FILE, 'utf8'));
-    for (const [k, v] of Object.entries(obj)) waterFeatureCache.set(k, v);
+    if (obj.__version !== WATER_CACHE_VERSION) {
+      console.log(`[water] Cache schema is v${obj.__version ?? 1}, need v${WATER_CACHE_VERSION} — ignoring, will refetch`);
+      return;
+    }
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === '__version') continue;
+      waterFeatureCache.set(k, v);
+    }
     console.log(`[water] Cache loaded: ${waterFeatureCache.size} counties`);
   } catch (err) {
     console.warn(`[water] Cache load failed: ${err.message}`);
@@ -204,7 +219,7 @@ function scheduleWaterCacheSave() {
   waterCacheSaveTimer = setTimeout(() => {
     waterCacheSaveTimer = null;
     try {
-      const obj = Object.fromEntries(waterFeatureCache);
+      const obj = { __version: WATER_CACHE_VERSION, ...Object.fromEntries(waterFeatureCache) };
       fs.writeFileSync(WATER_CACHE_FILE, JSON.stringify(obj), 'utf8');
     } catch (err) {
       console.warn(`[water] Cache save failed: ${err.message}`);
@@ -903,10 +918,16 @@ async function fetchNwiPondsForBbox(bbox, baseParams) {
     // OBJECTID must be requested explicitly — without it, geojson conversion leaves
     // feature.id undefined for every pond, which previously collapsed every tile's ponds
     // into a single Map entry keyed by undefined and silently dropped all but the last one.
-    const feats = await fetchAllFeaturesUpstream(NWI_URL, { ...baseParams, geometry: geomParam, outFields: 'Wetlands.OBJECTID,Wetlands.WETLAND_TYPE', where: NWI_POND_WHERE });
+    const feats = await fetchAllFeaturesUpstream(NWI_URL, { ...baseParams, geometry: geomParam, outFields: 'Wetlands.OBJECTID,Wetlands.WETLAND_TYPE,Wetlands.ACRES', where: NWI_POND_WHERE });
     for (const f of feats) seen.set(f.id, f);
   }
-  return [...seen.values()];
+  const ponds = [...seen.values()];
+  // NWI already reports area in acres — no unit conversion needed, unlike NHD's AREASQKM below.
+  for (const f of ponds) {
+    const acres = f.properties?.['Wetlands.ACRES'];
+    f._acres = (typeof acres === 'number') ? acres : null;
+  }
+  return ponds;
 }
 
 // Fetches NHD lakes/streams plus NWI-classified open-water ponds (farm ponds too small or
@@ -914,6 +935,8 @@ async function fetchNwiPondsForBbox(bbox, baseParams) {
 // NWI_POND_WHERE keeps marsh/swamp/seasonal wetlands out of the merge. The three sources are
 // fetched sequentially too, for the same concurrent-load reason as fetchAllFeaturesUpstream —
 // the NHD waterbody and flowline layers share a host, and hammering it doesn't help.
+// Polygon features (waterbody, ponds) get a `_acres` field for the min-water-area filter;
+// flowlines are lines with no area and are left without one.
 async function fetchOpenWaterFeaturesForBbox(bbox) {
   const [minLng, minLat, maxLng, maxLat] = bbox;
   const geomParam = JSON.stringify({ xmin: minLng, ymin: minLat, xmax: maxLng, ymax: maxLat, spatialReference: { wkid: 4326 } });
@@ -922,7 +945,11 @@ async function fetchOpenWaterFeaturesForBbox(bbox) {
     spatialRel: 'esriSpatialRelIntersects', inSR: '4326',
     returnGeometry: 'true', outSR: '4326', f: 'geojson',
   };
-  const waterbody = await fetchAllFeaturesUpstream(NHD_WATERBODY_URL, { ...baseParams, outFields: 'OBJECTID,GNIS_NAME', where: '1=1' });
+  const waterbody = await fetchAllFeaturesUpstream(NHD_WATERBODY_URL, { ...baseParams, outFields: 'OBJECTID,GNIS_NAME,AREASQKM', where: '1=1' });
+  for (const f of waterbody) {
+    const sqkm = f.properties?.AREASQKM;
+    f._acres = (typeof sqkm === 'number') ? sqkm * SQKM_TO_ACRES : null;
+  }
   const flowline  = await fetchAllFeaturesUpstream(NHD_FLOWLINE_URL,  { ...baseParams, outFields: 'OBJECTID,GNIS_NAME', where: '1=1' });
   const ponds     = await fetchNwiPondsForBbox(bbox, baseParams);
   return [...waterbody, ...flowline, ...ponds];
@@ -942,7 +969,7 @@ async function fetchOpenWaterFeaturesForBbox(bbox) {
 // changing which parcels count as adjacent.
 const SIMPLIFY_TOLERANCE_DEG = 0.0002; // ~73 ft at this latitude
 
-function buildWaterGrid(features) {
+function buildWaterGrid(features, minAcres = 0) {
   const bufDeg = (WATER_ADJACENT_FT / 364000) * 1.5; // rough ft→degree conversion + margin
   const grid = new Map(); // "row|col" -> [feature, …]
   for (let wf of features) {
@@ -952,6 +979,10 @@ function buildWaterGrid(features) {
     // non-geojson/Esri JSON responses) — matching on the uppercase key would silently treat
     // every flowline as unnamed.
     if (isLine && !wf.properties?.gnis_name) continue;
+    // Rivers/streams have no area and are exempt from this filter. A feature with unknown
+    // acreage (missing AREASQKM upstream) is let through rather than dropped — same fail-open
+    // reasoning as elsewhere in this file: unknown shouldn't silently become "doesn't count".
+    if (!isLine && minAcres > 0 && typeof wf._acres === 'number' && wf._acres < minAcres) continue;
     try { wf = turf.simplify(wf, { tolerance: SIMPLIFY_TOLERANCE_DEG, highQuality: false, mutate: true }); } catch {}
     let bb;
     try { bb = turf.bbox(wf); } catch { continue; }
@@ -1086,7 +1117,7 @@ app.get('/water-cache-status', (req, res) => {
 
 app.post('/water-adjacency-query', async (req, res) => {
   try {
-    const { parcels } = req.body;
+    const { parcels, minAcres } = req.body;
     if (!Array.isArray(parcels)) {
       return res.status(400).json({ error: 'parcels required' });
     }
@@ -1097,11 +1128,12 @@ app.post('/water-adjacency-query', async (req, res) => {
       return res.json({ results: parcels.map(p => ({ parcelfid: p.parcelfid, waterAdjacent: false })) });
     }
 
+    const minAcresNum = (typeof minAcres === 'number' && minAcres > 0) ? minAcres : 0;
     const t0 = Date.now();
     const featureLists = await Promise.all(counties.map(c => getWaterFeaturesForCounty(c)));
     const features = featureLists.flat();
     const t1 = Date.now();
-    const grid = buildWaterGrid(features);
+    const grid = buildWaterGrid(features, minAcresNum);
     const t2 = Date.now();
 
     // Yielding every YIELD_EVERY parcels lets other requests (a second search, a status check)
@@ -1119,7 +1151,7 @@ app.post('/water-adjacency-query', async (req, res) => {
       if (i % YIELD_EVERY === YIELD_EVERY - 1) await new Promise(r => setImmediate(r));
     }
     const t3 = Date.now();
-    console.log(`[water-adjacency] ${parcels.length} parcels, ${counties.length} counties, ${features.length} features — fetch ${t1 - t0}ms, grid ${t2 - t1}ms, match ${t3 - t2}ms`);
+    console.log(`[water-adjacency] ${parcels.length} parcels, ${counties.length} counties, ${features.length} features, minAcres=${minAcresNum} — fetch ${t1 - t0}ms, grid ${t2 - t1}ms, match ${t3 - t2}ms`);
 
     res.json({ results });
   } catch (err) {
