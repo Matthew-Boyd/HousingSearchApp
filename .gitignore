@@ -1,6 +1,7 @@
 node_modules
 buildings.geojson
 water-cache.json
+water-adjacency-cache.json
 .env
 .env.*
 server.log

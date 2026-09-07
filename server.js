@@ -17,6 +17,7 @@ const HIDDEN_FILE    = path.join(__dirname, 'hidden.json');
 const BUILDINGS_FILE = path.join(__dirname, 'buildings.geojson');
 const ASSESSOR_CACHE_FILE = path.join(__dirname, 'assessor-cache.json');
 const WATER_CACHE_FILE    = path.join(__dirname, 'water-cache.json');
+const WATER_ADJACENCY_CACHE_FILE = path.join(__dirname, 'water-adjacency-cache.json');
 
 // In-memory assessor cache. Key: PARCELID. Value: { bedrooms, sqft, yearBuilt, cachedAt }
 const assessorCache = new Map();
@@ -25,6 +26,14 @@ const assessorCache = new Map();
 // { features: [...GeoJSON features], cachedAt }. Populated lazily by getWaterFeaturesForCounty
 // — see the water-adjacency section below.
 const waterFeatureCache = new Map();
+
+// In-memory per-parcel water-adjacency cache. Key: parcelfid. Value: { county, waterCachedAt,
+// adjacentToLine, maxAdjacentPolygonAcres, hasUnknownSizePolygon }. Deliberately stores the raw
+// geometric facts, not a pre-filtered boolean — that's what lets the Min. water area filter
+// change without invalidating this cache: applying a new threshold is just a comparison against
+// already-cached numbers (see passesMinAcres), never a re-fetch or re-intersect. See
+// scanWaterAdjacency / the /water-adjacency-query handler below.
+const waterAdjacencyCache = new Map();
 
 // Spatial grid cell size (degrees). 0.05° ≈ 3.5 km lat / 4.3 km lng at 43°N.
 const CELL = 0.05;
@@ -50,11 +59,13 @@ const DOR_URL           = 'https://www.revenue.wi.gov/SLFReportscotvc/2025sumagg
 const NHD_WATERBODY_URL = 'https://hydro.nationalmap.gov/arcgis/rest/services/nhd/MapServer/12/query';
 const NHD_FLOWLINE_URL  = 'https://hydro.nationalmap.gov/arcgis/rest/services/nhd/MapServer/6/query';
 
-// A parcel centroid is essentially never literally inside a lake polygon (houses aren't built
-// underwater) and can never be "inside" a river/stream (zero-width lines), so adjacency is a
-// distance check, not a containment check. 300 ft is a small buffer standing in for "touches" —
-// real-world coordinates never exactly touch.
-const WATER_ADJACENT_FT = 300;
+// Checked against the parcel's actual boundary polygon, not a single representative point —
+// a point (address centroid, etc.) can sit closer to or farther from a water feature than the
+// parcel's real edge does, which previously flagged parcels a few hundred feet from a pond as
+// "adjacent" even though the pond was nowhere near the property line. 20 ft is just slack for
+// the parcel and hydrology layers being digitized independently — they're never pixel-perfect
+// aligned even for genuine waterfront lots — not a "nearby is good enough" allowance.
+const WATER_ADJACENT_FT = 20;
 
 // Cowardin classes that represent standing open water you could fish or float a small boat on
 // (Unconsolidated Bottom / Aquatic Bed), restricted to regimes that hold water most or all of
@@ -219,7 +230,17 @@ function scheduleWaterCacheSave() {
   waterCacheSaveTimer = setTimeout(() => {
     waterCacheSaveTimer = null;
     try {
-      const obj = { __version: WATER_CACHE_VERSION, ...Object.fromEntries(waterFeatureCache) };
+      const obj = { __version: WATER_CACHE_VERSION };
+      // Only the raw upstream shape (plus our own _acres) is persisted. buildWaterGrid mutates
+      // these same cached feature objects with _buffered/_bbox derived from WATER_ADJACENT_FT —
+      // if those got persisted too, a since-changed threshold's stale buffered shape would get
+      // silently reused forever after a restart instead of being recomputed against the new one.
+      for (const [county, entry] of waterFeatureCache) {
+        obj[county] = {
+          cachedAt: entry.cachedAt,
+          features: entry.features.map(f => ({ type: f.type, id: f.id, geometry: f.geometry, properties: f.properties, _acres: f._acres })),
+        };
+      }
       fs.writeFileSync(WATER_CACHE_FILE, JSON.stringify(obj), 'utf8');
     } catch (err) {
       console.warn(`[water] Cache save failed: ${err.message}`);
@@ -227,9 +248,53 @@ function scheduleWaterCacheSave() {
   }, 5000);
 }
 
+// ─── Per-parcel water-adjacency cache ──────────────────────────────────────────
+// Bump whenever WATER_ADJACENT_FT (or the definition of what counts as adjacent) changes — a
+// cache entry computed under an old tolerance would otherwise be silently reused as if it were
+// still correct. Unlike the water-feature cache above, a version mismatch here deletes the
+// stale file outright rather than just skipping the load: every entry in it would need
+// recomputing anyway, so there's nothing worth keeping it around for.
+const WATER_ADJACENCY_CACHE_VERSION = 1;
+
+function loadWaterAdjacencyCache() {
+  try {
+    if (!fs.existsSync(WATER_ADJACENCY_CACHE_FILE)) return;
+    const obj = JSON.parse(fs.readFileSync(WATER_ADJACENCY_CACHE_FILE, 'utf8'));
+    if (obj.__version !== WATER_ADJACENCY_CACHE_VERSION) {
+      console.log(`[water-adjacency-cache] Schema is v${obj.__version ?? 'unknown'}, need v${WATER_ADJACENCY_CACHE_VERSION} — deleting stale cache`);
+      fs.unlinkSync(WATER_ADJACENCY_CACHE_FILE);
+      return;
+    }
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === '__version') continue;
+      waterAdjacencyCache.set(k, v);
+    }
+    console.log(`[water-adjacency-cache] Loaded ${waterAdjacencyCache.size} parcels`);
+  } catch (err) {
+    console.warn(`[water-adjacency-cache] Load failed: ${err.message}`);
+  }
+}
+
+let waterAdjacencyCacheSaveTimer = null;
+function scheduleWaterAdjacencyCacheSave() {
+  // Debounce: this fires once per cache miss, which can be thousands per search.
+  if (waterAdjacencyCacheSaveTimer) return;
+  waterAdjacencyCacheSaveTimer = setTimeout(() => {
+    waterAdjacencyCacheSaveTimer = null;
+    try {
+      const obj = { __version: WATER_ADJACENCY_CACHE_VERSION, ...Object.fromEntries(waterAdjacencyCache) };
+      fs.writeFileSync(WATER_ADJACENCY_CACHE_FILE, JSON.stringify(obj), 'utf8');
+    } catch (err) {
+      console.warn(`[water-adjacency-cache] Save failed: ${err.message}`);
+    }
+  }, 5000);
+}
+
 // ─── express middleware ───────────────────────────────────────────────────────
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+// 10mb was tight once water-adjacency-query started carrying full parcel boundary polygons
+// (needed for real adjacency checks, not just a point) instead of a lat/lng pair per parcel.
+app.use(express.json({ limit: '30mb' }));
 
 // ─── static: serve index.html ─────────────────────────────────────────────────
 app.get('/', (req, res) => {
@@ -962,15 +1027,14 @@ async function fetchOpenWaterFeaturesForBbox(bbox) {
 // streams only" rule.
 // NHD lake polygons — especially the Great Lakes, since Racine and Kenosha border Lake
 // Michigan — can carry tens of thousands of shoreline vertices, which makes every downstream
-// turf operation on them (bbox, polygonToLine, booleanPointInPolygon) slow. Confirmed live:
-// a Racine County search's CPU-bound distance-matching phase blocked the whole Node process
-// for minutes, on top of the fetch time. Simplifying once here, well inside the 300ft
-// adjacency threshold (73ft max deviation), collapses vertex count without materially
-// changing which parcels count as adjacent.
-const SIMPLIFY_TOLERANCE_DEG = 0.0002; // ~73 ft at this latitude
+// turf operation on them (bbox, buffer, booleanIntersects) slow. Confirmed live: a Racine
+// County search's CPU-bound matching phase blocked the whole Node process for minutes, on top
+// of the fetch time. Simplifying once here collapses vertex count; the tolerance is kept well
+// under WATER_ADJACENT_FT (20ft) so it can't shift a real near-miss into a false match at the
+// tight tolerance this filter now runs at.
+const SIMPLIFY_TOLERANCE_DEG = 0.00001; // ~3.6 ft at this latitude
 
-function buildWaterGrid(features, minAcres = 0) {
-  const bufDeg = (WATER_ADJACENT_FT / 364000) * 1.5; // rough ft→degree conversion + margin
+function buildWaterGrid(features) {
   const grid = new Map(); // "row|col" -> [feature, …]
   for (let wf of features) {
     if (!wf.geometry) continue;
@@ -979,15 +1043,26 @@ function buildWaterGrid(features, minAcres = 0) {
     // non-geojson/Esri JSON responses) — matching on the uppercase key would silently treat
     // every flowline as unnamed.
     if (isLine && !wf.properties?.gnis_name) continue;
-    // Rivers/streams have no area and are exempt from this filter. A feature with unknown
-    // acreage (missing AREASQKM upstream) is let through rather than dropped — same fail-open
-    // reasoning as elsewhere in this file: unknown shouldn't silently become "doesn't count".
-    if (!isLine && minAcres > 0 && typeof wf._acres === 'number' && wf._acres < minAcres) continue;
-    try { wf = turf.simplify(wf, { tolerance: SIMPLIFY_TOLERANCE_DEG, highQuality: false, mutate: true }); } catch {}
+    // Acreage is NOT filtered here — every qualifying feature goes in the grid regardless of
+    // size, and scanWaterAdjacency records the actual acreage found. Filtering by size belongs
+    // at read time (passesMinAcres), against cached facts, so that changing the Min. water area
+    // threshold never requires touching this grid or the per-parcel cache built from it.
+    // Buffered once per feature and reused across every parcel checked against it, so adjacency
+    // becomes a plain polygon-intersects test against the parcel's real boundary instead of a
+    // distance measured from some single representative point on the parcel (which can be
+    // closer to, or farther from, the water than the parcel's actual edge is). Cached directly
+    // on the feature object, which lives in waterFeatureCache — computed once per feature for
+    // the life of the process, not once per request. Simplifying (only needed to make this
+    // one-time buffer computation cheap) happens in here too, so it's skipped on every later
+    // request once a feature is already buffered.
+    if (!wf._buffered) {
+      try { wf = turf.simplify(wf, { tolerance: SIMPLIFY_TOLERANCE_DEG, highQuality: false, mutate: true }); } catch {}
+      try { wf._buffered = turf.buffer(wf, WATER_ADJACENT_FT, { units: 'feet' }); } catch { continue; }
+    }
     let bb;
-    try { bb = turf.bbox(wf); } catch { continue; }
-    const [minX, minY, maxX, maxY] = [bb[0] - bufDeg, bb[1] - bufDeg, bb[2] + bufDeg, bb[3] + bufDeg];
-    wf._bbox = [minX, minY, maxX, maxY];
+    try { bb = turf.bbox(wf._buffered); } catch { continue; }
+    wf._bbox = bb;
+    const [minX, minY, maxX, maxY] = bb;
     const r0 = Math.floor(minY / CELL), r1 = Math.floor(maxY / CELL);
     const c0 = Math.floor(minX / CELL), c1 = Math.floor(maxX / CELL);
     for (let r = r0; r <= r1; r++) {
@@ -1001,56 +1076,59 @@ function buildWaterGrid(features, minAcres = 0) {
   return grid;
 }
 
-function waterFeatureDistanceFt(pt, wf) {
-  const g = wf.geometry;
-  if (!g) return Infinity;
-  // turf@6's pointToLineDistance only accepts a single-part LineString — Multi* geometries
-  // (multi-part lakes, rivers with disconnected segments) must be split and compared piece by
-  // piece, otherwise it throws and the feature is silently skipped as a non-match.
-  if (g.type === 'MultiLineString' || g.type === 'MultiPolygon') {
-    // The same water feature is checked against every nearby parcel — cache the flatten once
-    // per feature (on the feature itself) instead of recomputing it on every call, so each
-    // resulting Polygon part is a stable object that can itself cache _outline below.
-    if (!wf._parts) wf._parts = turf.flatten(wf).features;
-    let min = Infinity;
-    for (const part of wf._parts) {
-      const d = waterFeatureDistanceFt(pt, part);
-      if (d < min) min = d;
-    }
-    return min;
-  }
-  if (g.type === 'LineString') {
-    return turf.pointToLineDistance(pt, wf, { units: 'feet' });
-  }
-  if (g.type === 'Polygon') {
-    if (turf.booleanPointInPolygon(pt, wf)) return 0;
-    // Cached on first use — polygonToLine on a large lake shoreline is expensive, and the same
-    // polygon is checked against every parcel whose grid cell it overlaps.
-    if (!wf._outline) wf._outline = turf.polygonToLine(wf); // may itself be a MultiLineString if the polygon has holes
-    return waterFeatureDistanceFt(pt, wf._outline);
-  }
-  return Infinity;
-}
-
-// Checks the parcel's own grid cell plus its 8 neighbors — a 1-cell buffer is enough since
-// CELL (0.05°, ~3.5km) is vastly larger than WATER_ADJACENT_FT (300ft, ~0.0009°), so a
-// qualifying feature can only ever be one cell away from the parcel's own cell.
-function isWaterAdjacent(grid, lat, lng) {
-  const pt  = turf.point([lng, lat]);
-  const row = Math.floor(lat / CELL), col = Math.floor(lng / CELL);
+// Checks every grid cell the parcel's own bbox overlaps (not just its own cell plus neighbors)
+// so this is correct regardless of parcel size — in practice parcels are tiny relative to CELL
+// (0.05°, ~3.5km) so this is almost always exactly one cell. `wf._buffered` already encodes the
+// WATER_ADJACENT_FT tolerance, so a hit is just "the parcel's real boundary intersects the water
+// feature's buffered boundary".
+//
+// Unlike a plain true/false check, this scans every intersecting feature instead of stopping at
+// the first one, and records the raw facts (line touch? largest polygon acreage? any
+// unknown-size polygon?) rather than a verdict — that's the whole point: these facts don't
+// depend on minAcres, so they're exactly what's safe to persist in waterAdjacencyCache. Applying
+// a threshold to them later (passesMinAcres) is a cheap comparison, not a re-scan.
+function scanWaterAdjacency(grid, parcelGeometry) {
+  const facts = { adjacentToLine: false, maxAdjacentPolygonAcres: null, hasUnknownSizePolygon: false };
+  if (!parcelGeometry) return facts;
+  let bb;
+  try { bb = turf.bbox(parcelGeometry); } catch { return facts; }
+  const [minX, minY, maxX, maxY] = bb;
+  const r0 = Math.floor(minY / CELL), r1 = Math.floor(maxY / CELL);
+  const c0 = Math.floor(minX / CELL), c1 = Math.floor(maxX / CELL);
   const seen = new Set();
-  for (let dr = -1; dr <= 1; dr++) {
-    for (let dc = -1; dc <= 1; dc++) {
-      for (const wf of (grid.get(`${row + dr}|${col + dc}`) || [])) {
+  for (let r = r0; r <= r1; r++) {
+    for (let c = c0; c <= c1; c++) {
+      for (const wf of (grid.get(`${r}|${c}`) || [])) {
         if (seen.has(wf)) continue;
         seen.add(wf);
-        const [minX, minY, maxX, maxY] = wf._bbox;
-        if (lng < minX || lng > maxX || lat < minY || lat > maxY) continue;
-        try { if (waterFeatureDistanceFt(pt, wf) <= WATER_ADJACENT_FT) return true; } catch {}
+        const [minX2, minY2, maxX2, maxY2] = wf._bbox;
+        if (maxX < minX2 || minX > maxX2 || maxY < minY2 || minY > maxY2) continue;
+        let hit;
+        try { hit = turf.booleanIntersects(parcelGeometry, wf._buffered); } catch { continue; }
+        if (!hit) continue;
+        const isLine = wf.geometry.type === 'LineString' || wf.geometry.type === 'MultiLineString';
+        if (isLine) {
+          facts.adjacentToLine = true;
+        } else if (typeof wf._acres === 'number') {
+          if (facts.maxAdjacentPolygonAcres == null || wf._acres > facts.maxAdjacentPolygonAcres) {
+            facts.maxAdjacentPolygonAcres = wf._acres;
+          }
+        } else {
+          facts.hasUnknownSizePolygon = true;
+        }
       }
     }
   }
-  return false;
+  return facts;
+}
+
+// A named river/stream always counts (lines have no acreage to filter on) and so does an
+// adjacent polygon of unknown size (fail-open, same reasoning as elsewhere in this file: unknown
+// shouldn't silently become "doesn't count") — otherwise it's a plain size comparison.
+function passesMinAcres(facts, minAcres) {
+  return facts.adjacentToLine
+      || facts.hasUnknownSizePolygon
+      || (facts.maxAdjacentPolygonAcres != null && facts.maxAdjacentPolygonAcres >= minAcres);
 }
 
 // Water features are cached per county rather than per search bbox — the first
@@ -1062,7 +1140,7 @@ function isWaterAdjacent(grid, lat, lng) {
 //
 // Padded by ~1 mile: a one-time per-county fetch can afford a generous margin so a water body
 // just across the county line still counts for a parcel near the border (WATER_ADJACENT_FT
-// itself is only 300 ft).
+// itself is only 20 ft).
 const COUNTY_EXTENT_PAD_DEG = 0.02;
 
 async function fetchCountyExtent(county) {
@@ -1078,11 +1156,15 @@ async function fetchCountyExtent(county) {
 // for the full fetch — the second request just awaits the first's in-flight promise.
 const waterFetchInFlight = new Map();
 
+// Returns the full { features, cachedAt } entry, not just the features array — cachedAt is
+// what waterAdjacencyCache entries are stamped with, so a county's water data being refetched
+// (the only case where a persisted per-parcel fact could go stale) shows up as a stamp mismatch
+// instead of silently serving a fact computed against water data that's no longer current.
 async function getWaterFeaturesForCounty(county) {
   const cached = waterFeatureCache.get(county);
   if (cached) {
     console.log(`[water:${county}] Loading water data from cache (${cached.features.length} features)`);
-    return cached.features;
+    return cached;
   }
   if (waterFetchInFlight.has(county)) return waterFetchInFlight.get(county);
 
@@ -1090,10 +1172,11 @@ async function getWaterFeaturesForCounty(county) {
     console.log(`[water:${county}] Not cached — fetching water data from NHD/NWI…`);
     const bbox     = await fetchCountyExtent(county);
     const features = await fetchOpenWaterFeaturesForBbox(bbox);
-    waterFeatureCache.set(county, { features, cachedAt: Date.now() });
+    const entry    = { features, cachedAt: Date.now() };
+    waterFeatureCache.set(county, entry);
     console.log(`[water:${county}] Saving water data to cache (${features.length} features)`);
     scheduleWaterCacheSave();
-    return features;
+    return entry;
   })();
   waterFetchInFlight.set(county, promise);
   try {
@@ -1130,10 +1213,11 @@ app.post('/water-adjacency-query', async (req, res) => {
 
     const minAcresNum = (typeof minAcres === 'number' && minAcres > 0) ? minAcres : 0;
     const t0 = Date.now();
-    const featureLists = await Promise.all(counties.map(c => getWaterFeaturesForCounty(c)));
-    const features = featureLists.flat();
+    const countyEntries  = await Promise.all(counties.map(async c => [c, await getWaterFeaturesForCounty(c)]));
+    const cachedAtByCounty = new Map(countyEntries.map(([c, entry]) => [c, entry.cachedAt]));
+    const features = countyEntries.flatMap(([, entry]) => entry.features);
     const t1 = Date.now();
-    const grid = buildWaterGrid(features, minAcresNum);
+    const grid = buildWaterGrid(features);
     const t2 = Date.now();
 
     // Yielding every YIELD_EVERY parcels lets other requests (a second search, a status check)
@@ -1142,16 +1226,37 @@ app.post('/water-adjacency-query', async (req, res) => {
     // single event loop, and every other request, for minutes.
     const YIELD_EVERY = 200;
     const results = [];
+    let cacheHits = 0, cacheMisses = 0;
     for (let i = 0; i < parcels.length; i++) {
       const p = parcels[i];
-      results.push({
-        parcelfid:     p.parcelfid,
-        waterAdjacent: (p.lat != null && p.lng != null) ? isWaterAdjacent(grid, p.lat, p.lng) : false,
-      });
+      const county = (p.county || '').toUpperCase();
+      const waterCachedAt = cachedAtByCounty.get(county);
+
+      // A cached fact is only trustworthy if it was computed for this same parcel under this
+      // same county's CURRENT water data — if that county's water cache was ever refetched,
+      // waterCachedAt no longer matches and this falls through to recomputing, exactly the
+      // "county water data changed" invalidation case that can't be avoided.
+      let facts = waterAdjacencyCache.get(p.parcelfid);
+      if (facts && (facts.county !== county || facts.waterCachedAt !== waterCachedAt)) facts = null;
+      if (facts) {
+        cacheHits++;
+      } else {
+        facts = scanWaterAdjacency(grid, p.geometry);
+        // Only a real computation is worth caching — without geometry, scanWaterAdjacency just
+        // returns its all-false default, and caching that would wrongly stick even once a later
+        // request for the same parcel does include geometry.
+        if (p.geometry) {
+          waterAdjacencyCache.set(p.parcelfid, { county, waterCachedAt, ...facts });
+          scheduleWaterAdjacencyCacheSave();
+        }
+        cacheMisses++;
+      }
+
+      results.push({ parcelfid: p.parcelfid, waterAdjacent: passesMinAcres(facts, minAcresNum) });
       if (i % YIELD_EVERY === YIELD_EVERY - 1) await new Promise(r => setImmediate(r));
     }
     const t3 = Date.now();
-    console.log(`[water-adjacency] ${parcels.length} parcels, ${counties.length} counties, ${features.length} features, minAcres=${minAcresNum} — fetch ${t1 - t0}ms, grid ${t2 - t1}ms, match ${t3 - t2}ms`);
+    console.log(`[water-adjacency] ${parcels.length} parcels (${cacheHits} cached, ${cacheMisses} computed), ${counties.length} counties, ${features.length} features, minAcres=${minAcresNum} — fetch ${t1 - t0}ms, grid ${t2 - t1}ms, match ${t3 - t2}ms`);
 
     res.json({ results });
   } catch (err) {
@@ -1252,6 +1357,7 @@ async function start() {
   initHiddenFile();
   loadAssessorCache();
   loadWaterCache();
+  loadWaterAdjacencyCache();
   await Promise.all([loadDorRatios(), loadBuildingFootprints()]);
   app.listen(PORT, () => {
     console.log(`Wisconsin Parcel Search → http://localhost:${PORT}`);

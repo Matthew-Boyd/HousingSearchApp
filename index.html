@@ -257,7 +257,7 @@ The filter ceiling = budget × ratio ÷ 100.">?</span>
       <div class="filter-group">
         <label class="checkbox-label">
           <input type="checkbox" id="waterOnly">
-          Water-adjacent only (within 300 ft of a lake/river)
+          Water-adjacent only (touches a lake, river, or pond)
         </label>
         <div class="input-row" style="margin-top:6px">
           <label for="minWaterAcres" style="font-size:12px">Min. water area</label>
@@ -1188,9 +1188,12 @@ async function runWaterAdjacencyPass() {
   // response bail out instead of overwriting the results of a newer one.
   const reqId = ++S.waterAdjacencyReqId;
   try {
+    // The server checks the parcel's actual boundary against water features (not just a single
+    // point), so it needs the real polygon here — already loaded for every parcel since the
+    // search itself fetches with returnGeometry=true.
     const parcelsForQuery = S.parcels
-      .filter(f => f._centroid)
-      .map(f => ({ parcelfid: f.properties.PARCELID, lat: f._centroid.lat, lng: f._centroid.lng, county: f.properties.CONAME }));
+      .filter(f => f.geometry)
+      .map(f => ({ parcelfid: f.properties.PARCELID, geometry: f.geometry, county: f.properties.CONAME }));
     if (parcelsForQuery.length === 0) { S.waterAdjacencyDone = true; return; }
 
     const counties = [...new Set(parcelsForQuery.map(p => p.county).filter(Boolean))];
